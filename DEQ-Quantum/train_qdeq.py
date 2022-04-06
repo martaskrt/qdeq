@@ -209,7 +209,7 @@ if args.name == "N/A" and not args.debug:
     args.name = timestamp
     #raise ValueError("Please give a name to your run!")
 logging = create_exp_dir(args.work_dir,
-    scripts_to_save=['train_transformer.py', 'models/qdeq_model.py', '../lib/solvers.py'], debug=args.debug)
+    scripts_to_save=['train_qdeq.py', 'models/qdeq_model.py', '../lib/solvers.py'], debug=args.debug)
 
 # Set the random seed manually for reproducibility.
 np.random.seed(args.seed)

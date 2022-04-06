@@ -2,7 +2,7 @@
 
 if [[ $1 == 'train' ]]; then
     echo 'Run training (QDEQ)...'
-    python3 train_transformer.py \
+    python train_qdeq.py \
         --optim Adam \
         --lr 0.001 \
         --pretrain_steps 0 \

@@ -12,6 +12,7 @@ from torch.autograd import Variable as torchvar
 import tequila as tq
 from tequila.objective import Variable as tqvar
 from tequila.ml.interface_torch import TorchLayer
+from tequila import QTensor
 
 sys.path.append('../../')
 
@@ -67,13 +68,10 @@ def serial_quantum_eval(weights, x):
     E = tq.ExpectationValue(H=H, U=U)
     return E
 
-from tequila import QTensor
-
-
 class QModel(nn.Module):
     def __init__(self):
         super(QModel, self).__init__()
-        r = 1
+        r = 2
         weights = 2 * np.pi * np.random.random(size=(r+1, 3)) # some random initial weights
         weights = torch.tensor(weights, requires_grad=True)
         old_weights = weights.cpu().detach().numpy()
@@ -90,11 +88,14 @@ class QModel(nn.Module):
         self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
 
     def forward(self, x):
-        out = QTensor(shape=[len(x)])
+        # If errors: might have to use or might be able to use a QTensor in the test loop
+        # out = QTensor(shape=[len(x)])
+        out = torch.zeros(size=(len(x),))
         for i, x_ in enumerate(x):
             out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
         
         return out
+
 def square_loss(targets, predictions):
     loss = 0
     targets = targets.reshape(targets.shape[0], -1)
@@ -102,9 +103,11 @@ def square_loss(targets, predictions):
     for t, p in zip(targets, predictions):
         loss += (t - p) ** 2
     loss = loss / len(targets)
+
     return loss
 
 loss_fn = square_loss
+
 class QDEQCircuit(nn.Module):
     def __init__(self, pretrain_steps=1, device=None, 
                  f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
@@ -135,7 +138,8 @@ class QDEQCircuit(nn.Module):
         ## u1s = self.inject_conv(word_emb.transpose(1,2))      # bsz x 3*d_model x qlen
 
 
-        z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
+        # z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
+        z1s = torch.zeros((bsz, 1, 1), requires_grad=True) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
@@ -178,8 +182,21 @@ class QDEQCircuit(nn.Module):
                     print("getting hook")
                     print("new_z1s", new_z1s)
                     print("z1s", z1s)
-                    new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad, \
-                                             torch.zeros_like(grad), threshold=b_thres)['result']
+                    # fy = lambda y: autograd.grad(new_z1s, z1s, y,
+                    #                               retain_graph=True,\
+                    #                               allow_unused=True)[0] 
+
+                    # fy3 = lambda y: autograd.grad(new_z1s, z1s, y,
+                    #                               retain_graph=True,\
+                    #                               )[0] 
+                    # print(fy3(3))
+                    # print(fy(3))
+                    new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
+                                                                     retain_graph=True,\
+                                                                     # allow_unused=True)[0] + grad,\
+                                                                     )[0] + grad,\
+                                                                     torch.zeros_like(grad),\
+                                                                     threshold=b_thres)['result']
                     print("got hook", new_grad)
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
