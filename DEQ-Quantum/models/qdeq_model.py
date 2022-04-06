@@ -85,8 +85,8 @@ class QModel(nn.Module):
         weight_vars = copy.deepcopy(variables)
         weight_vars.remove('x')
         #variables.remove('x')
-        init_vars = {v: torch.tensor([[old_weights_flat[i]]]) for i, v in enumerate(weight_vars)}
-        init_vars['x'] = torch.tensor([[0.]], requires_grad=False)
+        init_vars = {v: torch.tensor([[[old_weights_flat[i]]]]) for i, v in enumerate(weight_vars)}
+        init_vars['x'] = torch.tensor([[[0.]]], requires_grad=False)
         compile_args = {'backend': 'cirq', 'initial_values': init_vars}
         self.circuit = TorchLayer(self.qmodel,compile_args) 
         print(self.circuit)
@@ -99,11 +99,11 @@ class QModel(nn.Module):
         for i, x_ in enumerate(x):
             for n, p in self.circuit.named_parameters():
                 if n == 'x':
-                    p.data = torch.tensor([[x_]], requires_grad=False)
+                    p.data = torch.tensor([[[x_]]], requires_grad=False)
             out[i] = torch.tensor([self.circuit()], requires_grad=True)
             #out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+        out = out.reshape((1,1,1))
         print('returning....', out)
-        out = out.reshape((bsz, 1 , -1))
         
         return out
 
@@ -189,8 +189,8 @@ class QDEQCircuit(nn.Module):
             
             if self.training:
                 z1s.requires_grad_()
-                new_z1s = self.func(z1s).reshape(bsz, -1)
-                # new_z1s = self.func(z1s).reshape(bsz, 1, -1)
+                # new_z1s = self.func(z1s).reshape(bsz, -1)
+                new_z1s = self.func(z1s).reshape(bsz, 1, -1)
                 #new_z1s = self.func(z1s, *func_args)
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
@@ -212,8 +212,11 @@ class QDEQCircuit(nn.Module):
                     # print(fy(3))
                     my_grad = autograd.functional.jacobian(self.func, z1s)
                     print("jac", my_grad)
+                    print(grad, grad.shape)
+                    grad = grad.reshape((1,1,1))
                     new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                                                                      retain_graph=True,\
+                                                                     allow_unused=True,\
                                                                      )[0] + grad,\
                                                                      torch.zeros_like(grad),\
                                                                      threshold=b_thres)['result']
