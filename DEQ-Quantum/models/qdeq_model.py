@@ -86,8 +86,8 @@ class QModel(nn.Module):
         weight_variables = copy.deepcopy(variables)
         weight_variables.remove('x')
         # variables.remove('x')
-        init_vars = {v: old_weights_flat[i] for i, v in enumerate(weight_variables)}
-        init_vars['x'] = 0. 
+        init_vars = {v: torch.tensor([[old_weights_flat[i]]]) for i, v in enumerate(weight_variables)}
+        init_vars['x'] = torch.tensor([[0.]])
         compile_args = {'backend': 'qulacs', 'initial_values': init_vars}
         # self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
         self.circuit = TorchLayer(self.qmodel, compile_args) 
@@ -103,8 +103,9 @@ class QModel(nn.Module):
         for i, x_ in enumerate(x):
             for name, param in self.circuit.named_parameters():
                 if name == 'x':
-                    print('current data', x_)
-                    param.data = torch.tensor(x_)
+                    # print('current data', x_)
+                    param.data = torch.tensor([[x_]])
+                    param.requires_gradient = False
             out[i] = self.circuit()
             # out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
         
@@ -200,12 +201,12 @@ class QDEQCircuit(nn.Module):
                     #                               retain_graph=True,\
                     #                               allow_unused=True)[0] 
 
-                    print(fy3(grad))
+                    # print(fy3(grad))
                     # print(fy(3))
                     new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                                                                      retain_graph=True,\
-                                                                     allow_unused=True)[0] + grad,\
-                                                                     # )[0] + grad,\
+                                                                     # allow_unused=True)[0] + grad,\
+                                                                     )[0] + grad,\
                                                                      torch.zeros_like(grad),\
                                                                      threshold=b_thres)['result']
                     print("got hook", new_grad)
