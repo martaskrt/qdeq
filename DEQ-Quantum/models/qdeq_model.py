@@ -82,10 +82,14 @@ class QModel(nn.Module):
         
         self.qmodel = serial_quantum_eval(weights, x_var)
         variables = self.qmodel.extract_variables()
+        weight_vars = copy.deepcopy(variables)
+        weight_vars.remove('x')
         #variables.remove('x')
-        init_vars = {v: old_weights_flat[i] for i, v in enumerate(variables)}
+        init_vars = {v: torch.tensor([[old_weights_flat[i]]]) for i, v in enumerate(weight_vars)}
+        init_vars['x'] = torch.tensor([[0.]], requires_grad=False)
         compile_args = {'backend': 'cirq', 'initial_values': init_vars}
         self.circuit = TorchLayer(self.qmodel,compile_args) 
+        print(self.circuit)
         #self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
 
     def forward(self, x):
@@ -93,10 +97,16 @@ class QModel(nn.Module):
         # out = QTensor(shape=[len(x)])
         out = torch.zeros(size=(len(x),))
         for i, x_ in enumerate(x):
-            out[i] = self.circuit(torch.tensor([x_]))
+            for n, p in self.circuit.named_parameters():
+                if n == 'x':
+                    p.data = torch.tensor([[x_]], requires_grad=False)
+            out[i] = torch.tensor([self.circuit()], requires_grad=True)
             #out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+        print('returning....', out)
+        out = out.reshape((bsz, 1 , -1))
         
         return out
+
 class QModel2(nn.Module):
     def __init__(self):
         super(QModel2, self).__init__()
@@ -127,7 +137,7 @@ class QDEQCircuit(nn.Module):
         #self.eval_n_layer = eval_n_layer
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.device = device
-        self.func = QModel2().to(device)
+        self.func = QModel().to(device)
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
@@ -164,6 +174,8 @@ class QDEQCircuit(nn.Module):
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
                 print("entering solver")
+                print('z1s', z1s)
+                print('func', self.func)
                 result = self.f_solver(lambda z: self.func(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
                 print(z1s)
@@ -177,7 +189,8 @@ class QDEQCircuit(nn.Module):
             
             if self.training:
                 z1s.requires_grad_()
-                new_z1s = self.func(z1s).reshape(bsz, 1, -1)
+                new_z1s = self.func(z1s).reshape(bsz, -1)
+                # new_z1s = self.func(z1s).reshape(bsz, 1, -1)
                 #new_z1s = self.func(z1s, *func_args)
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
@@ -206,8 +219,8 @@ class QDEQCircuit(nn.Module):
                                                                      threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
-        #core_out= new_z1s.reshape(bsz, -1)
-        core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
+        core_out= new_z1s.reshape(bsz, -1)
+        # core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
         #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
         #new_mems = self._update_mems(new_z1s, us, z0, mlen, qlen)
         new_mems = None
