@@ -76,37 +76,57 @@ class QModel(nn.Module):
         old_weights_flat = old_weights.flatten()
         weights = [[ tqvar(name=str(str(i)+str(j))) for j in range(weights.shape[1]) ] for i in range(weights.shape[0])]
         x_var = tqvar(name='x')
-        y_var = tqvar(name='y')
+        #y_var = tqvar(name='y')
         
         self.qmodel = serial_quantum_eval(weights, x_var)
         variables = self.qmodel.extract_variables()
-        weight_variables = copy.deepcopy(variables)
-        weight_variables.remove('x')
-        # variables.remove('x')
-        init_vars = {v: torch.tensor([[old_weights_flat[i]]]) for i, v in enumerate(weight_variables)}
-        init_vars['x'] = torch.tensor([[0.]])
-        compile_args = {'backend': 'qulacs', 'initial_values': init_vars}
-        # self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
-        self.circuit = TorchLayer(self.qmodel, compile_args) 
-        # If input parameter, then kill gradient
-        #for name, param in self.circuit.named_parameters():
-        #    if name == 'x':
-        #        param.requires_grad == False
+####<<<<<<< HEAD
+####        weight_variables = copy.deepcopy(variables)
+####        weight_variables.remove('x')
+####        # variables.remove('x')
+####        init_vars = {v: torch.tensor([[old_weights_flat[i]]]) for i, v in enumerate(weight_variables)}
+####        init_vars['x'] = torch.tensor([[0.]])
+####        compile_args = {'backend': 'qulacs', 'initial_values': init_vars}
+####        # self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
+####        self.circuit = TorchLayer(self.qmodel, compile_args) 
+####        # If input parameter, then kill gradient
+####        #for name, param in self.circuit.named_parameters():
+####        #    if name == 'x':
+####        #        param.requires_grad == False
+####=======
+        #variables.remove('x')
+        init_vars = {v: old_weights_flat[i] for i, v in enumerate(variables)}
+        compile_args = {'backend': 'cirq', 'initial_values': init_vars}
+        self.circuit = TorchLayer(self.qmodel,compile_args) 
+        #self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
+####>>>>>>> 96e14dbe17ab2e9d44acbff4f0981746de2d2063
 
     def forward(self, x):
         # If errors: might have to use or might be able to use a QTensor in the test loop
         # out = QTensor(shape=[len(x)])
         out = torch.zeros(size=(len(x),))
         for i, x_ in enumerate(x):
-            for name, param in self.circuit.named_parameters():
-                if name == 'x':
-                    # print('current data', x_)
-                    param.data = torch.tensor([[x_]])
-                    param.requires_gradient = False
-            out[i] = self.circuit()
-            # out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+####<<<<<<< HEAD
+####            for name, param in self.circuit.named_parameters():
+####                if name == 'x':
+####                    # print('current data', x_)
+####                    param.data = torch.tensor([[x_]])
+####                    param.requires_gradient = False
+####            out[i] = self.circuit()
+####            # out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+####=======
+            out[i] = self.circuit(torch.tensor([x_]))
+            #out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+####>>>>>>> 96e14dbe17ab2e9d44acbff4f0981746de2d2063
         
         return out
+class QModel2(nn.Module):
+    def __init__(self):
+        super(QModel2, self).__init__()
+
+        self.lin = nn.Linear(1,1)
+    def forward(self,x):
+        return self.lin(x)
 
 def square_loss(targets, predictions):
     loss = 0
@@ -130,14 +150,14 @@ class QDEQCircuit(nn.Module):
         #self.eval_n_layer = eval_n_layer
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.device = device
-        self.func = QModel().to(device)
+        self.func = QModel2().to(device)
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
         self.stop_mode = stop_mode
         self.alternative_mode = "abs" if self.stop_mode == "rel" else "rel"
         self.logging = logging or print
-
+        self.iodrop = VariationalDropout()
         # classifier:
         # self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model, cutoffs, div_val=div_val)
 
@@ -166,12 +186,12 @@ class QDEQCircuit(nn.Module):
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
-                print("entering solver", z1s)
+                print("entering solver")
                 result = self.f_solver(lambda z: self.func(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
-                print("exiting solver", z1s)
+                print(z1s)
+                print("out of solver")
             new_z1s = z1s
-                
             if (not self.training) and spectral_radius_mode:
                 with torch.enable_grad():
                     z1s.requires_grad_()
@@ -191,6 +211,7 @@ class QDEQCircuit(nn.Module):
                         # To avoid infinite loop
                         self.hook.remove()
                         torch.cuda.synchronize()
+
                     print("getting hook")
                     print("new_z1s", new_z1s)
                     print("z1s", z1s)
@@ -205,16 +226,13 @@ class QDEQCircuit(nn.Module):
                     print('grad without allow_unused', fy(grad, False))
                     new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                                                                      retain_graph=True,\
-                                                                     # allow_unused=True)[0] + grad,\
                                                                      )[0] + grad,\
                                                                      torch.zeros_like(grad),\
                                                                      threshold=b_thres)['result']
-                    print("got hook", new_grad)
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
-        print("out of solver", new_z1s)
-        print("training mode?", self.training)
-        core_out= new_z1s.reshape(bsz, -1)
+        #core_out= new_z1s.reshape(bsz, -1)
+        core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
         #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
         #new_mems = self._update_mems(new_z1s, us, z0, mlen, qlen)
         new_mems = None
@@ -234,9 +252,8 @@ class QDEQCircuit(nn.Module):
         #pred_hid = hidden[-tgt_len:]
         pred = hidden
         #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
-        print("pred", pred)
-        print("targ", target)
         loss = loss_fn(pred, target)
+        print("LOSS I AM HERE", loss.item())
         #loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
