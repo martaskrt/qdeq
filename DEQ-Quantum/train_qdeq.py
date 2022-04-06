@@ -21,6 +21,7 @@ from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from torch.utils.tensorboard import SummaryWriter
 
+from torchsummary import summary as tosummary
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
@@ -186,6 +187,7 @@ parser.add_argument('--load', type=str, default='',
                     help='path to load weight')
 parser.add_argument('--name', type=str, default='N/A',
                     help='name of the trial')
+parser.add_argument('--threads', type=int, default=4, help='num threads')
 
 args = parser.parse_args()
 args.tied = not args.not_tied
@@ -193,6 +195,8 @@ args.pretrain_steps += args.start_train_steps
 assert args.mem_len > 0, "For now you must set mem_len > 0 when using deq"
 args.work_dir += "deq"
 #args.cuda = torch.cuda.is_available()
+
+torch.set_num_threads(args.threads)
     
 if args.d_embed < 0:
     args.d_embed = args.d_model
@@ -234,7 +238,7 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 
 model = QDEQCircuit(pretrain_steps=args.pretrain_steps, device=device,
                     f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
-
+print('model', model)
 #### optimizer
 optimizer = getattr(optim if args.optim != 'RAdam' else radam, args.optim)(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 if not args.debug and not args.eval:

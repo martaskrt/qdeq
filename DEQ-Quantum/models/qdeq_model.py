@@ -13,6 +13,7 @@ import tequila as tq
 from tequila.objective import Variable as tqvar
 from tequila.ml.interface_torch import TorchLayer
 from tequila import QTensor
+import copy
 
 sys.path.append('../../')
 
@@ -71,7 +72,7 @@ def serial_quantum_eval(weights, x):
 class QModel(nn.Module):
     def __init__(self):
         super(QModel, self).__init__()
-        r = 2
+        r = 1
         weights = 2 * np.pi * np.random.random(size=(r+1, 3)) # some random initial weights
         weights = torch.tensor(weights, requires_grad=True)
         old_weights = weights.cpu().detach().numpy()
@@ -82,17 +83,30 @@ class QModel(nn.Module):
         
         self.qmodel = serial_quantum_eval(weights, x_var)
         variables = self.qmodel.extract_variables()
-        variables.remove('x')
-        init_vars = {v: old_weights_flat[i] for i, v in enumerate(variables)}
-        compile_args = {'backend': 'cirq', 'initial_values': init_vars}
-        self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
+        weight_variables = copy.deepcopy(variables)
+        weight_variables.remove('x')
+        # variables.remove('x')
+        init_vars = {v: old_weights_flat[i] for i, v in enumerate(weight_variables)}
+        init_vars['x'] = 0. 
+        compile_args = {'backend': 'qulacs', 'initial_values': init_vars}
+        # self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
+        self.circuit = TorchLayer(self.qmodel, compile_args) 
+        # If input parameter, then kill gradient
+        for name, param in self.circuit.named_parameters():
+            if name == 'x':
+                param.requires_grad == False
 
     def forward(self, x):
         # If errors: might have to use or might be able to use a QTensor in the test loop
         # out = QTensor(shape=[len(x)])
         out = torch.zeros(size=(len(x),))
         for i, x_ in enumerate(x):
-            out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
+            for name, param in self.circuit.named_parameters():
+                if name == 'x':
+                    print('current data', x_)
+                    param.data = torch.tensor(x_)
+            out[i] = self.circuit()
+            # out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
         
         return out
 
@@ -186,15 +200,12 @@ class QDEQCircuit(nn.Module):
                     #                               retain_graph=True,\
                     #                               allow_unused=True)[0] 
 
-                    # fy3 = lambda y: autograd.grad(new_z1s, z1s, y,
-                    #                               retain_graph=True,\
-                    #                               )[0] 
-                    # print(fy3(3))
+                    print(fy3(grad))
                     # print(fy(3))
                     new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                                                                      retain_graph=True,\
-                                                                     # allow_unused=True)[0] + grad,\
-                                                                     )[0] + grad,\
+                                                                     allow_unused=True)[0] + grad,\
+                                                                     # )[0] + grad,\
                                                                      torch.zeros_like(grad),\
                                                                      threshold=b_thres)['result']
                     print("got hook", new_grad)
