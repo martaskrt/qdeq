@@ -39,7 +39,9 @@ class QFCModel(nn.Module):
   def forward(self, x):
     bsz = x.shape[0]
     # down-sample the image
-    x = x.tile((28,28))
+    ## x = x.tile((28,28))
+    print(x.shape)
+    x = x.reshape((bsz,1,28,28))
     x = F.avg_pool2d(x, 6).view(bsz, 16)
     
     # reset qubit states
@@ -68,10 +70,11 @@ class QFCModel(nn.Module):
     x = self.measure(self.q_device).reshape(bsz, 2, 2)
     #print(x.shape)
     # classification
-    #x = x.sum(-1).squeeze()
-    x = x.sum().squeeze()
-    #x = F.log_softmax(x, dim=1)
-    
+    x = x.sum(-1).squeeze()
+    #x = x.sum().squeeze()
+    x = F.log_softmax(x, dim=1)
+    x = x.reshape((bsz, 1, -1))
+    print("output",x.shape)
     return x
 
 def square_loss(targets, predictions):
@@ -111,13 +114,16 @@ class QDEQCircuit(nn.Module):
     def _forward(self, x, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
         # Assume dec_inp has shape (qlen x bsz)
+        print(x.shape)
         bsz, _, qlen = x.shape
         ## KEEP THIS FOR IMAGES: 
         ## u1s = self.inject_conv(word_emb.transpose(1,2))      # bsz x 3*d_model x qlen
 
 
         # z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
-        z1s = torch.zeros((bsz, 1, 1), requires_grad=True) # bsz x 1 for 1 qubit
+        z1s = torch.zeros((bsz, 1, 2), requires_grad=True) # bsz x 1 for 1 qubit
+        #z1s = torch.zeros((bsz, 28, 28), requires_grad=True) # bsz x 1 for 1 qubit
+        #z1s = torch.zeros((bsz, 1, 1), requires_grad=True) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)

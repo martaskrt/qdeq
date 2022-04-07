@@ -21,12 +21,13 @@ from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from torch.utils.tensorboard import SummaryWriter
 
+from load_mnist import MNIST
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
                     help='location of the data corpus (default to the WT103 path)')
 parser.add_argument('--dataset', type=str, default='qc',
-                    choices=['qc'],
+                    choices=['qc', "mnist"],
                     help='dataset name')
 parser.add_argument('--n_layer', type=int, default=12,
                     help='number of total layers')
@@ -226,7 +227,22 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 ###############################################################################
 # Load data
 ###############################################################################
-
+dataset = MNIST(
+        root='./mnist_data',
+        train_valid_split_ratio=[0.9, 0.1],
+        digits_of_interest=[3, 6],
+        n_test_samples=75,
+    )
+dataflow = dict()
+for split in dataset:
+    sampler = torch.utils.data.RandomSampler(dataset[split])
+    
+    dataflow[split] = torch.utils.data.DataLoader(
+        dataset[split],
+        batch_size=256,
+        sampler=sampler,
+        num_workers=8,
+        pin_memory=True)
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -303,15 +319,17 @@ def train():
     #train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
     x = np.linspace(-6, 6, 70)
     y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
-    x = torch.tensor(x).to(device)
+    x = torch.tensor(x, requires_grad=False).to(device)
     mems = []
     #for batch, (data, target, seq_len) in enumerate(train_iter):
-    for batch in range(x.shape[0]):
-        
-        data = x[batch].reshape(args.batch_size,1, -1)
-        target = y[batch].reshape(args.batch_size, -1)
-        print("target", target)
-        print(f"batch {batch}: {data}, {target}")
+    #for batch in range(x.shape[0]):
+    for batch in dataflow['train']:    
+        #data = x[batch].reshape(args.batch_size,1, -1)
+        #target = y[batch].reshape(args.batch_size, -1)
+        data = batch['image'].to(device)
+        target = batch['digit'].to(device)
+        #print("target", target)
+        #print(f"batch {batch}: {data}, {target}")
         if train_step < args.start_train_steps:
             train_step += 1
             continue
