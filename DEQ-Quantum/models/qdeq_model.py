@@ -9,11 +9,8 @@ from termcolor import colored
 import os
 from torch.autograd import Variable as torchvar
 
-import tequila as tq
-from tequila.objective import Variable as tqvar
-from tequila.ml.interface_torch import TorchLayer
-from tequila import QTensor
-
+import torchquantum as tq
+import torchquantum.functional as tqf
 sys.path.append('../../')
 
 from lib.optimizations import weight_norm, VariationalDropout, VariationalHidDropout, VariationalAttnDropout
@@ -25,85 +22,57 @@ from utils.positional_embedding import PositionalEmbedding
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
+class QFCModel(nn.Module):
+  def __init__(self):
+    super().__init__()
+    self.n_wires = 4
+    self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+    self.measure = tq.MeasureAll(tq.PauliZ)
+    
+    self.encoder_gates = [tqf.rx] * 4 + [tqf.ry] * 4 + \
+                         [tqf.rz] * 4 + [tqf.rx] * 4
+    self.rx0 = tq.RX(has_params=True, trainable=True)
+    self.ry0 = tq.RY(has_params=True, trainable=True)
+    self.rz0 = tq.RZ(has_params=True, trainable=True)
+    self.crx0 = tq.CRX(has_params=True, trainable=True)
 
-
-degree = 1  # degree of the target function
-scaling = 1  # scaling of the data
-coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
-coeff0 = 0.1  # coefficient of zero frequency
-
-def S(x):
-    """Data-encoding circuit block."""
-    # qml.RX(scaling * x, wires=0)
-    return tq.circuit.gates.Rx(angle=scaling*x, target=0)
-
-def W(theta):
-    """Trainable circuit block."""
-    # qml.Rot = Rz(t0)Ry(t1)Rz(t2)
-    # qml.Rot(theta[0], theta[1], theta[2], wires=0)
-    ''' have to do the following if wanna do simulate '''
-    if not isinstance(theta[0], tqvar):
-        theta = [float(t) for t in theta]
-    W  = tq.circuit.circuit.QCircuit()
-    W += tq.circuit.gates.Rz(angle=theta[0], target=0)
-    W += tq.circuit.gates.Ry(angle=theta[1], target=0)
-    W += tq.circuit.gates.Rz(angle=theta[2], target=0)
-    return W
-
-
-def serial_quantum_model(weights, x):
-    ''' quantum circuit '''
-    U = tq.circuit.circuit.QCircuit()
-    for theta in weights[:-1]:
-        U += W(theta)
-        U += S(x)
-    # (L+1)'th unitary
-    U += W(weights[-1])
-    return U
-
-def serial_quantum_eval(weights, x):
-    ''' expectation value of quantum circuit '''
-    U = serial_quantum_model(weights, x)
-    H = tq.hamiltonian.QubitHamiltonian.from_string("Z(0)")
-    E = tq.ExpectationValue(H=H, U=U)
-    return E
-
-class QModel(nn.Module):
-    def __init__(self):
-        super(QModel, self).__init__()
-        r = 2
-        weights = 2 * np.pi * np.random.random(size=(r+1, 3)) # some random initial weights
-        weights = torch.tensor(weights, requires_grad=True)
-        old_weights = weights.cpu().detach().numpy()
-        old_weights_flat = old_weights.flatten()
-        weights = [[ tqvar(name=str(str(i)+str(j))) for j in range(weights.shape[1]) ] for i in range(weights.shape[0])]
-        x_var = tqvar(name='x')
-        #y_var = tqvar(name='y')
-        
-        self.qmodel = serial_quantum_eval(weights, x_var)
-        variables = self.qmodel.extract_variables()
-        #variables.remove('x')
-        init_vars = {v: old_weights_flat[i] for i, v in enumerate(variables)}
-        compile_args = {'backend': 'cirq', 'initial_values': init_vars}
-        self.circuit = TorchLayer(self.qmodel,compile_args) 
-        #self.circuit = TorchLayer(self.qmodel,compile_args, input_vars=[x_var]) 
-
-    def forward(self, x):
-        # If errors: might have to use or might be able to use a QTensor in the test loop
-        # out = QTensor(shape=[len(x)])
-        out = torch.zeros(size=(len(x),))
-        for i, x_ in enumerate(x):
-            out[i] = self.circuit(torch.tensor([x_]))
-            #out[i] = self.circuit(torch.tensor([x_], requires_grad=True))
-        
-        return out
-class QModel2(nn.Module):
-    def __init__(self):
-        super(QModel2, self).__init__()
-
-        self.lin = nn.Linear(1,1)
-    def forward(self,x):
-        return self.lin(x)
+  def forward(self, x):
+    bsz = x.shape[0]
+    # down-sample the image
+    x = x.tile((28,28))
+    x = F.avg_pool2d(x, 6).view(bsz, 16)
+    
+    # reset qubit states
+    self.q_device.reset_states(bsz)
+    
+    # encode the classical image to quantum domain
+    for k, gate in enumerate(self.encoder_gates):
+      gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
+    
+    # add some trainable gates (need to instantiate ahead of time)
+    self.rx0(self.q_device, wires=0)
+    self.ry0(self.q_device, wires=1)
+    self.rz0(self.q_device, wires=3)
+    self.crx0(self.q_device, wires=[0, 2])
+    
+    # add some more non-parameterized gates (add on-the-fly)
+    tqf.hadamard(self.q_device, wires=3)
+    tqf.sx(self.q_device, wires=2)
+    tqf.cnot(self.q_device, wires=[3, 0])
+    tqf.qubitunitary(self.q_device, wires=[1, 2], params=[[1, 0, 0, 0],
+                                                           [0, 1, 0, 0],
+                                                           [0, 0, 0, 1j],
+                                                           [0, 0, -1j, 0]])
+    
+    # perform measurement to get expectations (back to classical domain)
+    x = self.measure(self.q_device).reshape(bsz, 2, 2)
+    #print(x.shape)
+    # classification
+    #x = x.sum(-1).squeeze()
+    x = x.sum().squeeze()
+    #x = F.log_softmax(x, dim=1)
+    
+    return x
 
 def square_loss(targets, predictions):
     loss = 0
@@ -127,7 +96,7 @@ class QDEQCircuit(nn.Module):
         #self.eval_n_layer = eval_n_layer
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.device = device
-        self.func = QModel2().to(device)
+        self.func = QFCModel().to(device)
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
@@ -163,11 +132,12 @@ class QDEQCircuit(nn.Module):
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
-                print("entering solver")
+                #print("entering solver")
+                #print(z1s)
                 result = self.f_solver(lambda z: self.func(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
-                print(z1s)
-                print("out of solver")
+                #print(z1s)
+                #print("out of solver")
             new_z1s = z1s
             if (not self.training) and spectral_radius_mode:
                 with torch.enable_grad():
@@ -178,7 +148,6 @@ class QDEQCircuit(nn.Module):
             if self.training:
                 z1s.requires_grad_()
                 new_z1s = self.func(z1s).reshape(bsz, 1, -1)
-                #new_z1s = self.func(z1s, *func_args)
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
 
@@ -188,17 +157,6 @@ class QDEQCircuit(nn.Module):
                         # To avoid infinite loop
                         self.hook.remove()
                         torch.cuda.synchronize()
-                    # fy = lambda y: autograd.grad(new_z1s, z1s, y,
-                    #                               retain_graph=True,\
-                    #                               allow_unused=True)[0] 
-
-                    # fy3 = lambda y: autograd.grad(new_z1s, z1s, y,
-                    #                               retain_graph=True,\
-                    #                               )[0] 
-                    # print(fy3(3))
-                    # print(fy(3))
-                    my_grad = autograd.functional.jacobian(self.func, z1s)
-                    print("jac", my_grad)
                     new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                                                                      retain_graph=True,\
                                                                      )[0] + grad,\
@@ -209,7 +167,6 @@ class QDEQCircuit(nn.Module):
         #core_out= new_z1s.reshape(bsz, -1)
         core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
         #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
-        #new_mems = self._update_mems(new_z1s, us, z0, mlen, qlen)
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
 
@@ -228,7 +185,7 @@ class QDEQCircuit(nn.Module):
         pred = hidden
         #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
         loss = loss_fn(pred, target)
-        print("LOSS I AM HERE", loss.item())
+        #print("LOSS I AM HERE", loss.item())
         #loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
