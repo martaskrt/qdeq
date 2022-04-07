@@ -323,11 +323,11 @@ def train():
     mems = []
     #for batch, (data, target, seq_len) in enumerate(train_iter):
     #for batch in range(x.shape[0]):
-    for batch in dataflow['train']:    
+    for batch, data in enumerate(dataflow['train']):    
         #data = x[batch].reshape(args.batch_size,1, -1)
         #target = y[batch].reshape(args.batch_size, -1)
-        data = batch['image'].to(device)
-        target = batch['digit'].to(device)
+        x = data['image'].to(device)
+        target = data['digit'].to(device)
         #print("target", target)
         #print(f"batch {batch}: {data}, {target}")
         if train_step < args.start_train_steps:
@@ -341,7 +341,7 @@ def train():
         b_thres = args.b_thres
 
         # Mode 2: Normal training with one batch per iteration
-        ret = model(data, target, mems, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
+        ret = model(x, target, mems, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
         loss, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3:]
         loss = loss.float().mean().type_as(loss)
         jac_loss = jac_loss.float().mean().type_as(loss)

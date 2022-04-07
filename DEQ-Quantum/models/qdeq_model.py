@@ -36,13 +36,18 @@ class QFCModel(nn.Module):
     self.rz0 = tq.RZ(has_params=True, trainable=True)
     self.crx0 = tq.CRX(has_params=True, trainable=True)
 
-  def forward(self, x):
+    self.rescale = nn.Linear(4,16)
+  def forward(self, x, injection):
     bsz = x.shape[0]
     # down-sample the image
     ## x = x.tile((28,28))
-    print(x.shape)
-    x = x.reshape((bsz,1,28,28))
-    x = F.avg_pool2d(x, 6).view(bsz, 16)
+    #print(x.shape, injection.shape)
+    #x = x.reshape((bsz,1,28,28))
+    
+    x = x + injection
+    x = x.view(bsz, 16)
+    #print("new x", x.shape)
+    #x = F.avg_pool2d(x, 6).view(bsz, 16)
     
     # reset qubit states
     self.q_device.reset_states(bsz)
@@ -67,37 +72,48 @@ class QFCModel(nn.Module):
                                                            [0, 0, -1j, 0]])
     
     # perform measurement to get expectations (back to classical domain)
-    x = self.measure(self.q_device).reshape(bsz, 2, 2)
+    x = self.measure(self.q_device).reshape(bsz, 4)
+    
+    #x = self.measure(self.q_device).reshape(bsz, 2, 2)
     #print(x.shape)
     # classification
-    x = x.sum(-1).squeeze()
+    #x = x.sum(-1).squeeze()
     #x = x.sum().squeeze()
-    x = F.log_softmax(x, dim=1)
-    x = x.reshape((bsz, 1, -1))
-    print("output",x.shape)
-    return x
+    #x = F.log_softmax(x, dim=1)
+    #x = x.reshape((bsz, 1, -1))
+    #print("output",x.shape)
+    out = self.rescale(x)
+    out = out.reshape(out.shape[0], 1, -1)
+    #print("final shape", out)
+    return out
 
 class ImgFilter(nn.Module):
     def __init__(self):
-        super(ImgFilter).__init__()
-        output_chansize = 1
+        super().__init__()
         # downsampling model from MDEQ model
-        self.conv = nn.Sequential(nn.Conv2d(1,1),
+        
+        self.conv = nn.Sequential(nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1),
                                   nn.ReLU(inplace=True),
-                                  nn.Conv2d(1, 1),
+                                  nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1),
                                   nn.ReLU(inplace=True))
+        #self.lin = nn.Sequential(nn.Linear(16, 2))
+        
     def forward(self, x):
-        return self.conv(x)
+        out = self.conv(x)
+        #h = h.reshape(h.shape[0], -1)
+        #out = self.lin(h)
+        return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lin = nn.Sequential(nn.Linear(2,2),
+        self.lin = nn.Sequential(nn.Linear(16,2),
                                  nn.ReLU(inplace=True),
                                  nn.Linear(2,2))
     def forward(self, x):
+        #print("input to lin", x.shape)
         return self.lin(x)
 def square_loss(targets, predictions):
     loss = 0
@@ -137,25 +153,27 @@ class QDEQCircuit(nn.Module):
     def _forward(self, x, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
         # Assume dec_inp has shape (qlen x bsz)
-        print(x.shape)
-        bsz, _, qlen = x.shape
+        #print(x.shape)
+        bsz, _, W, H = x.shape
+        #bsz, _, qlen = x.shape
         ## KEEP THIS FOR IMAGES: 
         ## u1s = self.inject_conv(word_emb.transpose(1,2))      # bsz x 3*d_model x qlen
+        #print("X.SHAPE", x.shape)
         u1s = self.input_conv(x)
-        assert u1s.shape == (bsz, 1, 2)
+        assert u1s.shape == (bsz, 1, 16)
+        func_args = [u1s]
         # z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
-        z1s = torch.zeros((bsz, 1, 2), requires_grad=True) # bsz x 1 for 1 qubit
+        z1s = torch.zeros((bsz, 1, 16), requires_grad=True) # bsz x 1 for 1 qubit
         #z1s = torch.zeros((bsz, 28, 28), requires_grad=True) # bsz x 1 for 1 qubit
         #z1s = torch.zeros((bsz, 1, 1), requires_grad=True) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
-
         # warming up the weights:
         if not deq_mode:
             n_layer = self.n_layer if self.training or train_step > 0 else self.eval_n_layer
             for i in range(n_layer):
-                z1s = self.func(z1s)
+                z1s = self.func(z1s, *func_args)
             new_z1s = z1s
         else:
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
@@ -163,7 +181,7 @@ class QDEQCircuit(nn.Module):
             with torch.no_grad():
                 #print("entering solver")
                 #print(z1s)
-                result = self.f_solver(lambda z: self.func(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
                 #print(z1s)
                 #print("out of solver")
@@ -176,7 +194,7 @@ class QDEQCircuit(nn.Module):
             
             if self.training:
                 z1s.requires_grad_()
-                new_z1s = self.func(z1s).reshape(bsz, 1, -1)
+                new_z1s = self.func(z1s, *func_args).reshape(bsz, 1, -1)
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
 
@@ -193,8 +211,8 @@ class QDEQCircuit(nn.Module):
                                                                      threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
-        #core_out= new_z1s.reshape(bsz, -1)
-        core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
+        core_out= new_z1s.reshape(bsz, -1)
+        #core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
         #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
@@ -211,8 +229,10 @@ class QDEQCircuit(nn.Module):
                                                             writer=writer)
         # get prediction
         #pred_hid = hidden[-tgt_len:]
-        pred = hidden
+        #pred = hidden
+        pred = self.cls(hidden)
         #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
+        
         loss = loss_fn(pred, target)
         #print("LOSS I AM HERE", loss.item())
         #loss = loss.view(tgt_len, -1)
