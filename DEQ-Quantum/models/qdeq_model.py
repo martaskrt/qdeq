@@ -77,6 +77,28 @@ class QFCModel(nn.Module):
     print("output",x.shape)
     return x
 
+class ImgFilter(nn.Module):
+    def __init__(self):
+        super(ImgFilter).__init__()
+        output_chansize = 1
+        # downsampling model from MDEQ model
+        self.conv = nn.Sequential(nn.Conv2d(1,1),
+                                  nn.BatchNorm2d(1),
+                                  nn.ReLU(inplace=True),
+                                  nn.Conv2d(1, 1),
+                                  nn.BatchNorm2d(1),
+                                  nn.ReLU(inplace=True))
+    def forward(self, x):
+        return self.conv(x)
+
+class CLS(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Sequential(nn.Linear(2,2),
+                                 nn.ReLU(inplace=True),
+                                 nn.Linear(2,2))
+    def forward(self, x):
+        return self.lin(x)
 def square_loss(targets, predictions):
     loss = 0
     targets = targets.reshape(targets.shape[0], -1)
@@ -98,6 +120,7 @@ class QDEQCircuit(nn.Module):
         #self.n_layer = n_layer
         #self.eval_n_layer = eval_n_layer
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
+        self.input_conv = ImgFilter()
         self.device = device
         self.func = QFCModel().to(device)
         self.f_solver = f_solver
@@ -109,7 +132,7 @@ class QDEQCircuit(nn.Module):
         self.iodrop = VariationalDropout()
         # classifier:
         # self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model, cutoffs, div_val=div_val)
-
+        self.cls = CLS()
 
     def _forward(self, x, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
@@ -118,8 +141,8 @@ class QDEQCircuit(nn.Module):
         bsz, _, qlen = x.shape
         ## KEEP THIS FOR IMAGES: 
         ## u1s = self.inject_conv(word_emb.transpose(1,2))      # bsz x 3*d_model x qlen
-
-
+        u1s = self.input_conv(x)
+        assert u1s.shape == (bsz, 1, 2)
         # z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         z1s = torch.zeros((bsz, 1, 2), requires_grad=True) # bsz x 1 for 1 qubit
         #z1s = torch.zeros((bsz, 28, 28), requires_grad=True) # bsz x 1 for 1 qubit
@@ -132,7 +155,7 @@ class QDEQCircuit(nn.Module):
         if not deq_mode:
             n_layer = self.n_layer if self.training or train_step > 0 else self.eval_n_layer
             for i in range(n_layer):
-                z1s = self.func(z1s, *func_args)
+                z1s = self.func(z1s)
             new_z1s = z1s
         else:
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
