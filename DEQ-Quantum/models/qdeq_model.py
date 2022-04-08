@@ -73,18 +73,8 @@ class QFCModel(nn.Module):
     
     # perform measurement to get expectations (back to classical domain)
     x = self.measure(self.q_device).reshape(bsz, 4)
-    
-    #x = self.measure(self.q_device).reshape(bsz, 2, 2)
-    #print(x.shape)
-    # classification
-    #x = x.sum(-1).squeeze()
-    #x = x.sum().squeeze()
-    #x = F.log_softmax(x, dim=1)
-    #x = x.reshape((bsz, 1, -1))
-    #print("output",x.shape)
     out = self.rescale(x)
     out = out.reshape(out.shape[0], 1, -1)
-    #print("final shape", out)
     return out
 
 class ImgFilter(nn.Module):
@@ -98,22 +88,18 @@ class ImgFilter(nn.Module):
                                   nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1),
                                   nn.ReLU(inplace=True))
-        #self.lin = nn.Sequential(nn.Linear(16, 2))
-        
     def forward(self, x):
-        out = self.conv(x)
-        #h = h.reshape(h.shape[0], -1)
-        #out = self.lin(h)
+        out = F.avg_pool2d(x, 6).view(x.shape[0], 16)
+        # out = self.conv2(x)
         return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
     def __init__(self):
         super().__init__()
         self.lin = nn.Sequential(nn.Linear(16,2),
-                                 nn.ReLU(inplace=True),
+                                 #nn.ReLU(inplace=True),
                                  nn.Linear(2,2))
     def forward(self, x):
-        #print("input to lin", x.shape)
         return self.lin(x)
 def square_loss(targets, predictions):
     loss = 0
@@ -234,10 +220,23 @@ class QDEQCircuit(nn.Module):
         #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
         
         loss = loss_fn(pred, target)
+
+        #print(pred.argmax(dim=-1),target)
+        with torch.no_grad():
+            _, indices = pred.topk(1, dim=1)
+            masks = indices.eq(target.view(-1, 1).expand_as(indices))
+            size = target.shape[0]
+            corrects = masks.sum().item()
+            acc = corrects / size
+            #print(pred.shape, target.shape)
+            #print(torch.sum(pred.argmax(dim=1) == target), len(target))
+
+            #acc = torch.sum(pred.argmax(dim=1) == target)/target.shape[0]
+
         #print("LOSS I AM HERE", loss.item())
         #loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
-            return [loss, jac_loss, sradius]
+            return [loss, acc, jac_loss, sradius]
         else:
-            return [loss, jac_loss, sradius] + new_mems
+            return [loss, acc, jac_loss, sradius] + new_mems

@@ -242,7 +242,8 @@ for split in dataset:
         batch_size=256,
         sampler=sampler,
         num_workers=8,
-        pin_memory=True)
+        pin_memory=True,
+        ) 
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -312,7 +313,7 @@ def target_function(x):
     return np.real(res)
 
 def train():
-    global train_step, train_loss, train_jac_loss, best_val_loss, eval_start_time, log_start_time
+    global train_step, train_loss, train_acc, train_jac_loss, best_val_loss, eval_start_time, log_start_time
     model.train()
     #model.reset_length(args.tgt_len, args.mem_len)
 
@@ -323,13 +324,12 @@ def train():
     mems = []
     #for batch, (data, target, seq_len) in enumerate(train_iter):
     #for batch in range(x.shape[0]):
+    #for batch, (x,target) in enumerate(dataflow['train']):    
     for batch, data in enumerate(dataflow['train']):    
         #data = x[batch].reshape(args.batch_size,1, -1)
         #target = y[batch].reshape(args.batch_size, -1)
         x = data['image'].to(device)
         target = data['digit'].to(device)
-        #print("target", target)
-        #print(f"batch {batch}: {data}, {target}")
         if train_step < args.start_train_steps:
             train_step += 1
             continue
@@ -342,7 +342,7 @@ def train():
 
         # Mode 2: Normal training with one batch per iteration
         ret = model(x, target, mems, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
-        loss, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3:]
+        loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
         loss = loss.float().mean().type_as(loss)
         jac_loss = jac_loss.float().mean().type_as(loss)
         if compute_jac_loss:
@@ -351,7 +351,7 @@ def train():
         else:
             loss.backward()
         train_loss += loss.float().item()
-            
+        train_acc += acc    
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
         train_step += 1
@@ -371,15 +371,17 @@ def train():
         # Logging of training progress
         if train_step % args.log_interval == 0:
             cur_loss = train_loss / args.log_interval
+            cur_acc = train_acc / args.log_interval
             cur_ppl = math.exp(cur_loss)
             cur_jac_loss = np.mean(train_jac_loss)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
-                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.2f} | ppl {:9.3f}'.format(
+                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.5f} | acc {:5.5f} | ppl {:9.3f}'.format(
                 epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
-                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_ppl)
+                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_ppl)
             logging(log_str)
             train_loss = 0
+            train_acc = 0
             train_jac_loss = []
             log_start_time = time.time()
 
@@ -436,6 +438,7 @@ def train():
 # Loop over epochs.
 train_step = 0
 train_loss = 0
+train_acc = 0
 train_jac_loss = []
 best_val_loss = None
 
