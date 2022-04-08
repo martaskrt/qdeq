@@ -106,7 +106,7 @@ class CLS(nn.Module):
                                  #nn.ReLU(inplace=True),
                                  nn.Linear(2,2))
     def forward(self, x):
-        return self.lin(x)
+        return  F.log_softmax(self.lin(x), dim=1)
 def square_loss(targets, predictions):
     loss = 0
     targets = targets.reshape(targets.shape[0], -1)
@@ -225,8 +225,8 @@ class QDEQCircuit(nn.Module):
         pred = self.cls(hidden)
         #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
         
-        loss = loss_fn(pred, target)
-
+        #loss = loss_fn(pred, target)
+        loss = F.nll_loss(pred, target)
         #print(pred.argmax(dim=-1),target)
         with torch.no_grad():
             _, indices = pred.topk(1, dim=1)
