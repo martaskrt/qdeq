@@ -36,7 +36,9 @@ class QFCModel(nn.Module):
     self.rz0 = tq.RZ(has_params=True, trainable=True)
     self.crx0 = tq.CRX(has_params=True, trainable=True)
 
-    self.rescale = nn.Linear(4,16)
+    #self.rescale = nn.Linear(2,16)
+    self.rescale = nn.Upsample(scale_factor=8)
+    #self.rescale = nn.Linear(4,16)
   def forward(self, x, injection):
     bsz = x.shape[0]
     # down-sample the image
@@ -73,8 +75,12 @@ class QFCModel(nn.Module):
     
     # perform measurement to get expectations (back to classical domain)
     x = self.measure(self.q_device).reshape(bsz, 4)
+    
+    x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+    x = F.log_softmax(x, dim=1)
+    x = x.reshape(x.shape[0], 1, -1)
     out = self.rescale(x)
-    out = out.reshape(out.shape[0], 1, -1)
+    #out = out.reshape(out.shape[0], 1, -1)
     return out
 
 class ImgFilter(nn.Module):
