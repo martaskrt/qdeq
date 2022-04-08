@@ -268,34 +268,31 @@ if args.scheduler == 'cosine':
 # Training code
 ###############################################################################
 
-def evaluate(eval_iter):
+def evaluate(dataflow):
     global train_step
     model.eval()
-    model.reset_length(args.eval_tgt_len, args.mem_len)
 
     # Evaluation
-    total_len, total_loss = 0, 0.
-    rho_list = []
-    if args.spectral_radius_mode:
-        print("WARNING: You are evaluating with the power method at val. time. This may make things extremely slow.")
+    val_loss, val_acc, val_step = 0, 0, 0
     with torch.no_grad():
         mems = []
-        for i, (data, target, seq_len) in enumerate(eval_iter):
-            if 0 < args.max_eval_steps <= i:
-                break
-            ret = para_model(data, target, mems, train_step=train_step, f_thres=args.f_thres, 
-                             b_thres=args.b_thres, compute_jac_loss=False,
-                             spectral_radius_mode=args.spectral_radius_mode, writer=writer)
-            loss, _, sradius, mems = ret[0], ret[1], ret[2], ret[3:]
+        #for i, (data, target, seq_len) in enumerate(eval_iter):
+        for batch, data in enumerate(dataflow['valid']):
+            x = data['image'].to(device)
+            target = data['digit'].to(device)
+            #ret = para_model(data, target, mems, train_step=train_step, f_thres=args.f_thres, 
+             #                b_thres=args.b_thres, compute_jac_loss=False,
+              #               spectral_radius_mode=args.spectral_radius_mode, writer=writer)
+            ret = model(x, target, mems, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
+            #loss, _, sradius, mems = ret[0], ret[1], ret[2], ret[3:]
+            loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
             loss = loss.mean()
-            if args.spectral_radius_mode:
-                rho_list.append(sradius.mean().item())
-            total_loss += seq_len * loss.float().item()
-            total_len += seq_len
-    #if rho_list:
-     #   logging(f"(Estimated) Spectral radius over validation set: {np.mean(rho_list)}")
+            val_loss += loss.float().item()
+            val_acc += acc
+            val_step += 1
     model.train()
-    return total_loss / total_len
+    #return total_loss / total_len
+    return val_loss / val_step, val_acc / val_step
 
 
 degree = 1  # degree of the target function
@@ -322,9 +319,7 @@ def train():
     y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
     x = torch.tensor(x, requires_grad=False).to(device)
     mems = []
-    #for batch, (data, target, seq_len) in enumerate(train_iter):
     #for batch in range(x.shape[0]):
-    #for batch, (x,target) in enumerate(dataflow['train']):    
     for batch, data in enumerate(dataflow['train']):    
         #data = x[batch].reshape(args.batch_size,1, -1)
         #target = y[batch].reshape(args.batch_size, -1)
@@ -391,13 +386,13 @@ def train():
 
         # Enter evaluation/inference mode once in a while and save the model if needed
         if train_step % args.eval_interval == 0:
-            val_loss = evaluate(va_iter)
+            val_loss, val_acc = evaluate(dataflow)
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.2f} | valid ppl {:9.3f}'.format(
+                      '| valid loss {:5.5f} | valid acc {:5.5f} | valid ppl {:9.3f}'.format(
                 train_step // args.eval_interval, train_step,
-                (time.time() - eval_start_time), val_loss, val_ppl)
+                (time.time() - eval_start_time), val_loss, val_acc, val_ppl)
             logging(log_str)
             logging('-' * 100)
 

@@ -208,7 +208,10 @@ class QDEQCircuit(nn.Module):
         #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
-
+    def save_weights(self, path, name='pretrained_qdeq'):
+        with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
+            self.logging(f"Saving weight state dict at {name}.pth")
+            torch.save(self.state_dict(), f)
     def forward(self, data, target, mems, train_step=-1, **kwargs):
 
         f_thres = kwargs.get('f_thres', 30)
