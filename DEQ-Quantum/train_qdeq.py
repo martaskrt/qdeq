@@ -24,47 +24,18 @@ from torch.utils.tensorboard import SummaryWriter
 from load_mnist import MNIST
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
-parser.add_argument('--data', type=str, default='../data/wikitext-103',
-                    help='location of the data corpus (default to the WT103 path)')
-parser.add_argument('--dataset', type=str, default='qc',
-                    choices=['qc', "mnist"],
+parser.add_argument('--dataset', type=str, default='mnist',
+                    choices=['fourier', "mnist"],
                     help='dataset name')
-parser.add_argument('--n_layer', type=int, default=12,
-                    help='number of total layers')
-parser.add_argument('--eval_n_layer', type=int, default=12,
-                    help='number of total layers at evaluation')
-parser.add_argument('--n_head', type=int, default=10,
-                    help='number of heads (default: 10)')
-parser.add_argument('--d_head', type=int, default=50,
-                    help='head dimension (default: 50)')
-parser.add_argument('--d_embed', type=int, default=-1,
-                    help='embedding dimension (default: match d_model)')
-parser.add_argument('--d_model', type=int, default=500,
-                    help='model dimension (default: 500)')
-parser.add_argument('--d_inner', type=int, default=8000,
-                    help='inner dimension in the position-wise feedforward block (default: 8000)')
-
+parser.add_argument('--mode', type=str, default='implicit',
+                    choices=['implicit', 'direct'])
 # Dropouts
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='global dropout rate (default: 0.05)')
-parser.add_argument('--dropatt', type=float, default=0.0,
-                    help='attention map dropout rate (default: 0.0)')
 
 # Initializations
-# Note: Generally, to make sure the DEQ model is stable initially, we should constrain the range
-#       of initialization.
 parser.add_argument('--init', default='normal', type=str,
                     help='parameter initializer to use.')
-parser.add_argument('--emb_init', default='normal', type=str,
-                    help='parameter initializer to use.')
-parser.add_argument('--init_range', type=float, default=0.05,
-                    help='parameters initialized by U(-init_range, init_range)')
-parser.add_argument('--emb_init_range', type=float, default=0.01,
-                    help='parameters initialized by U(-init_range, init_range)')
-parser.add_argument('--init_std', type=float, default=0.01,
-                    help='parameters initialized by N(0, init_std)')
-parser.add_argument('--proj_init_std', type=float, default=0.01,
-                    help='parameters initialized by N(0, init_std)')
 
 # Optimizers
 parser.add_argument('--optim', default='Adam', type=str,
@@ -94,15 +65,6 @@ parser.add_argument('--batch_size', type=int, default=60,
 parser.add_argument('--batch_chunk', type=int, default=1,
                     help='split batch into chunks to save memory')
 
-# Sequence logistics
-parser.add_argument('--tgt_len', type=int, default=150,
-                    help='number of tokens to predict')
-parser.add_argument('--eval_tgt_len', type=int, default=150,
-                    help='number of tokens to predict for evaluation')
-parser.add_argument('--mem_len', type=int, default=150,
-                    help='length of the retained previous heads')
-parser.add_argument('--local_size', type=int, default=0,
-                    help='local horizon size')
 
 # DEQ related [Bai et al. 2019]
 parser.add_argument('--f_solver', default='anderson', type=str,
@@ -138,20 +100,10 @@ parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
-parser.add_argument('--eval', action='store_true',
-                    help='evaluation mode')
-parser.add_argument('--adaptive', action='store_true',
-                    help='use adaptive softmax')
-parser.add_argument('--div_val', type=int, default=1,
-                    help='divident value for adapative input and softmax')
 parser.add_argument('--pre_lnorm', action='store_true',
                     help='apply LayerNorm to the input instead of the output')
 parser.add_argument('--wnorm', action='store_true',
                     help='apply WeightNorm to the weights')
-parser.add_argument('--varlen', action='store_true',
-                    help='use variable length')
-parser.add_argument('--multi_gpu', action='store_true',
-                    help='use multiple GPU')
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
 parser.add_argument('--eval-interval', type=int, default=4000,
@@ -166,15 +118,10 @@ parser.add_argument('--debug', action='store_true',
                     help='run in debug mode (do not create exp dir)')
 parser.add_argument('--same_length', action='store_true',
                     help='use the same attn length for all tokens')
-parser.add_argument('--attn_type', type=int, default=0,
-                    help='attention type. 0 for ours, 1 for Shaw et al,'
-                    '2 for Vaswani et al, 3 for Al Rfou et al. (Only 0 supported now)')
 parser.add_argument('--eta_min', type=float, default=0.0,
                     help='min learning rate for cosine scheduler')
 parser.add_argument('--weight_decay', type=float, default=0.0,
                     help='weight decay')
-parser.add_argument('--gpu0_bsz', type=int, default=-1,
-                    help='batch size on gpu 0')
 parser.add_argument('--max_eval_steps', type=int, default=-1,
                     help='max eval steps')
 parser.add_argument('--pretrain_steps', type=int, default=0,
@@ -191,12 +138,12 @@ parser.add_argument('--name', type=str, default='N/A',
 args = parser.parse_args()
 args.tied = not args.not_tied
 args.pretrain_steps += args.start_train_steps
-assert args.mem_len > 0, "For now you must set mem_len > 0 when using deq"
+#assert args.mem_len > 0, "For now you must set mem_len > 0 when using deq"
 args.work_dir += "deq"
 #args.cuda = torch.cuda.is_available()
     
-if args.d_embed < 0:
-    args.d_embed = args.d_model
+#if args.d_embed < 0:
+ #   args.d_embed = args.d_model
 
 assert args.batch_size % args.batch_chunk == 0
 
@@ -227,23 +174,26 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 ###############################################################################
 # Load data
 ###############################################################################
-dataset = MNIST(
-        root='./mnist_data',
-        train_valid_split_ratio=[0.9, 0.1],
-        digits_of_interest=[3, 6],
-        n_test_samples=75,
-    )
-dataflow = dict()
-for split in dataset:
-    sampler = torch.utils.data.RandomSampler(dataset[split])
-    
-    dataflow[split] = torch.utils.data.DataLoader(
-        dataset[split],
-        batch_size=256,
-        sampler=sampler,
-        num_workers=8,
-        pin_memory=True,
-        ) 
+if args.dataset == "mnist":
+    dataset = MNIST(
+            root='./mnist_data',
+            train_valid_split_ratio=[0.9, 0.1],
+            digits_of_interest=[3, 6],
+            n_test_samples=75,
+        )
+    dataflow = dict()
+    for split in dataset:
+        sampler = torch.utils.data.RandomSampler(dataset[split])
+        
+        dataflow[split] = torch.utils.data.DataLoader(
+            dataset[split],
+            batch_size=args.batch_size,
+            sampler=sampler,
+            num_workers=8,
+            pin_memory=True,
+            ) 
+elif args.dataset == 'qc':
+    pass
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -254,7 +204,7 @@ model = QDEQCircuit(pretrain_steps=args.pretrain_steps, device=device,
 
 #### optimizer
 optimizer = getattr(optim if args.optim != 'RAdam' else radam, args.optim)(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-if not args.debug and not args.eval:
+if not args.debug:
     writer = SummaryWriter(log_dir='log/', flush_secs=5)
 else:
     writer = None
@@ -280,18 +230,13 @@ def evaluate(dataflow):
         for batch, data in enumerate(dataflow['valid']):
             x = data['image'].to(device)
             target = data['digit'].to(device)
-            #ret = para_model(data, target, mems, train_step=train_step, f_thres=args.f_thres, 
-             #                b_thres=args.b_thres, compute_jac_loss=False,
-              #               spectral_radius_mode=args.spectral_radius_mode, writer=writer)
             ret = model(x, target, mems, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
-            #loss, _, sradius, mems = ret[0], ret[1], ret[2], ret[3:]
             loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
             loss = loss.mean()
             val_loss += loss.float().item()
             val_acc += acc
             val_step += 1
     model.train()
-    #return total_loss / total_len
     return val_loss / val_step, val_acc / val_step
 
 
@@ -345,6 +290,9 @@ def train():
             train_jac_loss.append(jac_loss.float().item())
         else:
             loss.backward()
+        #for name, param in model.named_parameters():
+         #   if param.requires_grad:
+          #      print(name, param.grad)
         train_loss += loss.float().item()
         train_acc += acc    
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -440,19 +388,6 @@ best_val_loss = None
 log_start_time = time.time()
 eval_start_time = time.time()
 
-if args.eval:
-    train_step = 1e9
-    epoch = -1
-    valid_loss = evaluate(va_iter)
-    logging('=' * 100)
-    logging('| End of training | valid loss {:5.2f} | valid ppl {:9.3f}'.format(valid_loss, math.exp(valid_loss)))
-    logging('=' * 100)
-        
-    test_loss = evaluate(te_iter)
-    logging('=' * 100)
-    logging('| End of training | test loss {:5.2f} | test ppl {:9.3f}'.format(test_loss, math.exp(test_loss)))
-    logging('=' * 100)
-    sys.exit(0)
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:

@@ -13,7 +13,7 @@ import torchquantum as tq
 import torchquantum.functional as tqf
 sys.path.append('../../')
 
-from lib.optimizations import weight_norm, VariationalDropout, VariationalHidDropout, VariationalAttnDropout
+from lib.optimizations import weight_norm, VariationalDropout
 from lib.solvers import anderson, broyden
 from lib.jacobian import jac_loss_estimate, power_method
 
@@ -161,6 +161,7 @@ class QDEQCircuit(nn.Module):
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
+
         # warming up the weights:
         if not deq_mode:
             n_layer = self.n_layer if self.training or train_step > 0 else self.eval_n_layer
@@ -170,13 +171,12 @@ class QDEQCircuit(nn.Module):
         else:
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
-            with torch.no_grad():
-                #print("entering solver")
-                #print(z1s)
+            if False:
+            #with torch.no_grad():
+                # print("z1s before entering solver", torch.norm(z1s))
                 result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
-                #print(z1s)
-                #print("out of solver")
+                # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
             if (not self.training) and spectral_radius_mode:
                 with torch.enable_grad():
@@ -203,9 +203,10 @@ class QDEQCircuit(nn.Module):
                                                                      threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
-        core_out= new_z1s.reshape(bsz, -1)
+        #core_out= new_z1s.reshape(bsz, -1)
         #core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
-        #core_out = new_z1s.permute(2,0,1).contiguous()       # qlen x bsz x d_model
+        core_out = self.iodrop(new_z1s, 0.05)
+        core_out= core_out.reshape(bsz, -1)
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
     def save_weights(self, path, name='pretrained_qdeq'):
