@@ -22,65 +22,149 @@ from utils.positional_embedding import PositionalEmbedding
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
-class QFCModel(nn.Module):
-  def __init__(self):
-    super().__init__()
-    self.n_wires = 4
-    self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-    self.measure = tq.MeasureAll(tq.PauliZ)
-    
-    self.encoder_gates = [tqf.rx] * 4 + [tqf.ry] * 4 + \
-                         [tqf.rz] * 4 + [tqf.rx] * 4
-    self.rx0 = tq.RX(has_params=True, trainable=True)
-    self.ry0 = tq.RY(has_params=True, trainable=True)
-    self.rz0 = tq.RZ(has_params=True, trainable=True)
-    self.crx0 = tq.CRX(has_params=True, trainable=True)
 
-    #self.rescale = nn.Linear(2,16)
-    self.rescale = nn.Upsample(scale_factor=8)
-    #self.rescale = nn.Linear(4,16)
-  def forward(self, x, injection):
-    bsz = x.shape[0]
-    # down-sample the image
-    ## x = x.tile((28,28))
-    #print(x.shape, injection.shape)
-    #x = x.reshape((bsz,1,28,28))
+
+# class FourierModel(nn.Module):
+class FourierModel(toq.QuantumModule):
+    def __init__(self):
+        super().__init__()
+        # Here, consider only 1-qubit problems
+        self.n_wires = 1
+        # Each layer has 
+        # - RY(param) - RZ(param) - RY(param) - RX(data) -
+        # additionally, after the last layer, there's an extra
+        # parametrized RY-RZ-RY sequence
+        self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
+
+        # Unfortunately does not work generic but have to hard-code
+
+        self.rx = toq.RX(has_params=True, trainable=False)
+
+        self.ry00 = toq.RY(has_params=True, trainable=True)
+        self.ry01 = toq.RY(has_params=True, trainable=True)
+        self.ry10 = toq.RY(has_params=True, trainable=True)
+        self.ry11 = toq.RY(has_params=True, trainable=True)
+        self.rz0 = toq.RY(has_params=True, trainable=True)
+        self.rz1 = toq.RY(has_params=True, trainable=True)
+
+        self.ry20 = toq.RY(has_params=True, trainable=True)
+        self.ry21 = toq.RY(has_params=True, trainable=True)
+        self.ry30 = toq.RY(has_params=True, trainable=True)
+        self.ry31 = toq.RY(has_params=True, trainable=True)
+        self.rz2 = toq.RY(has_params=True, trainable=True)
+        self.rz3 = toq.RY(has_params=True, trainable=True)
+
+        # Peform Pauli-Z measurement
+        self.measure = toq.MeasureAll(toq.PauliZ)
+
+
+    # @toq.static_support
+    def forward(self, x):
+        y = torch.zeros_like(x, dtype=torch.cfloat)
+        for i, x_ in enumerate(x):
+            self.q_device.reset_states(1)
+            # Fix data in encoding gate
+            for n, p in self.named_parameters():
+                if n == 'rx.RX_params':
+                    p.data.fill_(x_)
+
+            # Extra rotations in the beginning 
+            self.ry00(q_device=self.q_device, wires=0)
+            self.rz0(q_device=self.q_device, wires=0)
+            self.ry01(q_device=self.q_device, wires=0)
+
+            # First layer
+            self.rx(q_device=self.q_device, wires=0)
+
+            self.ry10(q_device=self.q_device, wires=0)
+            self.rz1(q_device=self.q_device, wires=0)
+            self.ry11(q_device=self.q_device, wires=0)
+
+            # Second layer
+            self.rx(q_device=self.q_device, wires=0)
+
+            self.ry20(q_device=self.q_device, wires=0)
+            self.rz2(q_device=self.q_device, wires=0)
+            self.ry21(q_device=self.q_device, wires=0)
+
+            # Third layer
+            self.rx(q_device=self.q_device, wires=0)
+
+            self.ry30(q_device=self.q_device, wires=0)
+            self.rz3(q_device=self.q_device, wires=0)
+            self.ry31(q_device=self.q_device, wires=0)
+
+            y[i] = self.measure(self.q_device)
+
+        return y
+
+def mse_loss(x, y):
+    delta = torch.square(x - y)
+    loss = torch.sum(delta) / len(x)
+    return loss
+
+loss_fn_fourier = mse_loss
+
+class QFCModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.n_wires = 4
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+        self.measure = tq.MeasureAll(tq.PauliZ)
+        
+        self.encoder_gates = [tqf.rx] * 4 + [tqf.ry] * 4 + \
+                             [tqf.rz] * 4 + [tqf.rx] * 4
+        self.rx0 = tq.RX(has_params=True, trainable=True)
+        self.ry0 = tq.RY(has_params=True, trainable=True)
+        self.rz0 = tq.RZ(has_params=True, trainable=True)
+        self.crx0 = tq.CRX(has_params=True, trainable=True)
     
-    x = x + injection
-    x = x.view(bsz, 16)
-    #print("new x", x.shape)
-    #x = F.avg_pool2d(x, 6).view(bsz, 16)
-    
-    # reset qubit states
-    self.q_device.reset_states(bsz)
-    
-    # encode the classical image to quantum domain
-    for k, gate in enumerate(self.encoder_gates):
-      gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
-    
-    # add some trainable gates (need to instantiate ahead of time)
-    self.rx0(self.q_device, wires=0)
-    self.ry0(self.q_device, wires=1)
-    self.rz0(self.q_device, wires=3)
-    self.crx0(self.q_device, wires=[0, 2])
-    
-    # add some more non-parameterized gates (add on-the-fly)
-    tqf.hadamard(self.q_device, wires=3)
-    tqf.sx(self.q_device, wires=2)
-    tqf.cnot(self.q_device, wires=[3, 0])
-    tqf.qubitunitary(self.q_device, wires=[1, 2], params=[[1, 0, 0, 0],
-                                                           [0, 1, 0, 0],
-                                                           [0, 0, 0, 1j],
-                                                           [0, 0, -1j, 0]])
-    
-    # perform measurement to get expectations (back to classical domain)
-    x = self.measure(self.q_device).reshape(bsz, 4)
-    
-    x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
-    x = F.log_softmax(x, dim=1)
-    x = x.reshape(x.shape[0], 1, -1)
-    out = self.rescale(x)
-    return out
+        #self.rescale = nn.Linear(2,16)
+        self.rescale = nn.Upsample(scale_factor=8)
+        #self.rescale = nn.Linear(4,16)
+
+    def forward(self, x, injection):
+        bsz = x.shape[0]
+        # down-sample the image
+        ## x = x.tile((28,28))
+        #print(x.shape, injection.shape)
+        #x = x.reshape((bsz,1,28,28))
+        
+        x = x + injection
+        x = x.view(bsz, 16)
+        #print("new x", x.shape)
+        #x = F.avg_pool2d(x, 6).view(bsz, 16)
+        
+        # reset qubit states
+        self.q_device.reset_states(bsz)
+        
+        # encode the classical image to quantum domain
+        for k, gate in enumerate(self.encoder_gates):
+            gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
+        
+        # add some trainable gates (need to instantiate ahead of time)
+        self.rx0(self.q_device, wires=0)
+        self.ry0(self.q_device, wires=1)
+        self.rz0(self.q_device, wires=3)
+        self.crx0(self.q_device, wires=[0, 2])
+        
+        # add some more non-parameterized gates (add on-the-fly)
+        tqf.hadamard(self.q_device, wires=3)
+        tqf.sx(self.q_device, wires=2)
+        tqf.cnot(self.q_device, wires=[3, 0])
+        tqf.qubitunitary(self.q_device, wires=[1, 2], params=[[1, 0, 0, 0],
+                                                              [0, 1, 0, 0],
+                                                              [0, 0, 0, 1j],
+                                                              [0, 0, -1j, 0]])
+
+        # perform measurement to get expectations (back to classical domain)
+        x = self.measure(self.q_device).reshape(bsz, 4)
+
+        x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+        x = F.log_softmax(x, dim=1)
+        x = x.reshape(x.shape[0], 1, -1)
+        out = self.rescale(x)
+        return out
 
 class ImgFilter(nn.Module):
     def __init__(self):
@@ -106,17 +190,6 @@ class CLS(nn.Module):
                                  nn.Linear(2,2))
     def forward(self, x):
         return  F.log_softmax(self.lin(x), dim=1)
-def square_loss(targets, predictions):
-    loss = 0
-    targets = targets.reshape(targets.shape[0], -1)
-    predictions = predictions.reshape(targets.shape[0], -1)
-    for t, p in zip(targets, predictions):
-        loss += (t - p) ** 2
-    loss = loss / len(targets)
-
-    return loss
-
-loss_fn = square_loss
 
 class QDEQCircuit(nn.Module):
     def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
@@ -134,7 +207,8 @@ class QDEQCircuit(nn.Module):
             # classifier:
             self.cls = CLS()
         elif self.dataset == "fourier":
-            print("Fourier model not implemented yet!"); import sys; sys.exit(0)
+            self.func = FourierModel().to(device, dtype=torch.cfloat)
+            # print("Fourier model not implemented yet!"); import sys; sys.exit(0)
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
@@ -231,8 +305,9 @@ class QDEQCircuit(nn.Module):
                 acc = corrects / size
 
         elif self.dataset == "fourier":
+            # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
-            loss = loss_fn(pred, target)
+            loss = loss_fn_fourier(pred, target)
             acc = loss.item()
 
         if new_mems is None:
