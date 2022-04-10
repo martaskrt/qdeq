@@ -80,7 +80,6 @@ class QFCModel(nn.Module):
     x = F.log_softmax(x, dim=1)
     x = x.reshape(x.shape[0], 1, -1)
     out = self.rescale(x)
-    #out = out.reshape(out.shape[0], 1, -1)
     return out
 
 class ImgFilter(nn.Module):
@@ -120,7 +119,7 @@ def square_loss(targets, predictions):
 loss_fn = square_loss
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, pretrain_steps=1, device=None, 
+    def __init__(self, dataset, pretrain_steps=1, device=None, 
                  f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
         super().__init__()
         self.pretrain_steps = pretrain_steps
@@ -130,7 +129,13 @@ class QDEQCircuit(nn.Module):
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.input_conv = ImgFilter()
         self.device = device
-        self.func = QFCModel().to(device)
+        self.dataset = dataset
+        if self.dataset == "mnist":
+            self.func = QFCModel().to(device)
+            # classifier:
+            self.cls = CLS()
+        elif self.dataset == "fourier":
+            print("Fourier model not implemented yet!"); import sys; sys.exit(0)
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
@@ -138,26 +143,19 @@ class QDEQCircuit(nn.Module):
         self.alternative_mode = "abs" if self.stop_mode == "rel" else "rel"
         self.logging = logging or print
         self.iodrop = VariationalDropout()
-        # classifier:
-        # self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model, cutoffs, div_val=div_val)
-        self.cls = CLS()
 
     def _forward(self, x, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
-        # Assume dec_inp has shape (qlen x bsz)
-        #print(x.shape)
-        bsz, _, W, H = x.shape
-        #bsz, _, qlen = x.shape
-        ## KEEP THIS FOR IMAGES: 
-        ## u1s = self.inject_conv(word_emb.transpose(1,2))      # bsz x 3*d_model x qlen
-        #print("X.SHAPE", x.shape)
-        u1s = self.input_conv(x)
-        assert u1s.shape == (bsz, 1, 16)
-        func_args = [u1s]
-        # z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
-        z1s = torch.zeros((bsz, 1, 16), requires_grad=True) # bsz x 1 for 1 qubit
-        #z1s = torch.zeros((bsz, 28, 28), requires_grad=True) # bsz x 1 for 1 qubit
-        #z1s = torch.zeros((bsz, 1, 1), requires_grad=True) # bsz x 1 for 1 qubit
+        if self.dataset == "mnist":
+            bsz, _, W, H = x.shape
+            u1s = self.input_conv(x)
+            assert u1s.shape == (bsz, 1, 16)
+            func_args = [u1s]
+            z1s = torch.zeros((bsz, 1, 16), requires_grad=True)
+        elif self.dataset == "fourier":
+            bsz, _, qlen = x.shape
+            func_args = []
+            z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
@@ -203,18 +201,18 @@ class QDEQCircuit(nn.Module):
                                                                      threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
-        #core_out= new_z1s.reshape(bsz, -1)
-        #core_out = self.iodrop(new_z1s, 0.05).permute(2,0,1).contiguous()
-        core_out = self.iodrop(new_z1s, 0.05)
+        if self.dataset == "mnist":
+            core_out = self.iodrop(new_z1s, 0.05)
         core_out= core_out.reshape(bsz, -1)
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
+    
     def save_weights(self, path, name='pretrained_qdeq'):
         with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
             self.logging(f"Saving weight state dict at {name}.pth")
             torch.save(self.state_dict(), f)
-    def forward(self, data, target, mems, train_step=-1, **kwargs):
-
+    def forward(self, data, target, mems,  train_step=-1, **kwargs):
+        
         f_thres = kwargs.get('f_thres', 30)
         b_thres = kwargs.get('b_thres', 40)
         compute_jac_loss = kwargs.get('compute_jac_loss', True)
@@ -223,28 +221,21 @@ class QDEQCircuit(nn.Module):
         hidden, new_mems, jac_loss, sradius = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step, 
                                                             compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode, 
                                                             writer=writer)
-        # get prediction
-        #pred_hid = hidden[-tgt_len:]
-        #pred = hidden
-        pred = self.cls(hidden)
-        #loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.contiguous().view(-1))
-        
-        #loss = loss_fn(pred, target)
-        loss = F.nll_loss(pred, target)
-        #print(pred.argmax(dim=-1),target)
-        with torch.no_grad():
-            _, indices = pred.topk(1, dim=1)
-            masks = indices.eq(target.view(-1, 1).expand_as(indices))
-            size = target.shape[0]
-            corrects = masks.sum().item()
-            acc = corrects / size
-            #print(pred.shape, target.shape)
-            #print(torch.sum(pred.argmax(dim=1) == target), len(target))
+        # get prediction 
+        if self.dataset == "mnist":
+            pred = self.cls(hidden)
+            loss = F.nll_loss(pred, target)
+            with torch.no_grad():
+                _, indices = pred.topk(1, dim=1)
+                masks = indices.eq(target.view(-1, 1).expand_as(indices))
+                size = target.shape[0]
+                corrects = masks.sum().item()
+                acc = corrects / size
 
-            #acc = torch.sum(pred.argmax(dim=1) == target)/target.shape[0]
-
-        #print("LOSS I AM HERE", loss.item())
-        #loss = loss.view(tgt_len, -1)
+        elif self.dataset == "fourier":
+            pred = hidden
+            loss = loss_fn(pred, target)
+            acc = loss.item()
 
         if new_mems is None:
             return [loss, acc, jac_loss, sradius]

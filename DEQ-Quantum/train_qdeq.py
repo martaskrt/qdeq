@@ -139,13 +139,9 @@ parser.add_argument('--name', type=str, default='N/A',
 args = parser.parse_args()
 args.tied = not args.not_tied
 args.pretrain_steps += args.start_train_steps
-#assert args.mem_len > 0, "For now you must set mem_len > 0 when using deq"
 args.work_dir += "deq"
 #args.cuda = torch.cuda.is_available()
     
-#if args.d_embed < 0:
- #   args.d_embed = args.d_model
-
 assert args.batch_size % args.batch_chunk == 0
 
 args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
@@ -201,7 +197,7 @@ for split in dataset:
 ###############################################################################
 
 
-model = QDEQCircuit(pretrain_steps=args.pretrain_steps, device=device,
+model = QDEQCircuit(args.dataset,pretrain_steps=args.pretrain_steps, device=device,
                     f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
 
 #### optimizer
@@ -228,11 +224,10 @@ def evaluate(dataflow):
     val_loss, val_acc, val_step = 0, 0, 0
     with torch.no_grad():
         mems = []
-        #for i, (data, target, seq_len) in enumerate(eval_iter):
         for batch, data in enumerate(dataflow['valid']):
             x = data['x'].to(device)
             target = data['y'].to(device)
-            ret = model(x, target, mems, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
+            ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
             loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
             loss = loss.mean()
             val_loss += loss.float().item()
@@ -242,34 +237,13 @@ def evaluate(dataflow):
     return val_loss / val_step, val_acc / val_step
 
 
-degree = 1  # degree of the target function
-scaling = 1  # scaling of the data
-coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
-coeff0 = 0.1  # coefficient of zero frequency
-
-def target_function(x):
-    """Generate a truncated Fourier series, where the data gets re-scaled."""
-    res = coeff0
-    for idx, coeff in enumerate(coeffs):
-        exponent = np.complex128(scaling * (idx+1) * x * 1j)
-        conj_coeff = np.conjugate(coeff)
-        res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
-    return np.real(res)
 
 def train():
     global train_step, train_loss, train_acc, train_jac_loss, best_val_loss, eval_start_time, log_start_time
     model.train()
-    #model.reset_length(args.tgt_len, args.mem_len)
 
-    #train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
-    x = np.linspace(-6, 6, 70)
-    y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
-    x = torch.tensor(x, requires_grad=False).to(device)
     mems = []
-    #for batch in range(x.shape[0]):
     for batch, data in enumerate(dataflow['train']):    
-        #data = x[batch].reshape(args.batch_size,1, -1)
-        #target = y[batch].reshape(args.batch_size, -1)
         x = data['x'].to(device)
         target = data['y'].to(device)
         if train_step < args.start_train_steps:
@@ -283,7 +257,7 @@ def train():
         b_thres = args.b_thres
 
         # Mode 2: Normal training with one batch per iteration
-        ret = model(x, target, mems, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
+        ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
         loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
         loss = loss.float().mean().type_as(loss)
         jac_loss = jac_loss.float().mean().type_as(loss)
