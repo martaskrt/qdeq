@@ -30,6 +30,8 @@ parser.add_argument('--dataset', type=str, default='mnist',
                     help='dataset name')
 parser.add_argument('--mode', type=str, default='implicit',
                     choices=['implicit', 'direct'])
+parser.add_argument('--n_layer', type=int, default=-1,
+                    help='number of layers in direct solver')
 # Dropouts
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='global dropout rate (default: 0.05)')
@@ -117,8 +119,6 @@ parser.add_argument('--restart_dir', type=str, default='',
                     help='restart dir')
 parser.add_argument('--debug', action='store_true',
                     help='run in debug mode (do not create exp dir)')
-parser.add_argument('--same_length', action='store_true',
-                    help='use the same attn length for all tokens')
 parser.add_argument('--eta_min', type=float, default=0.0,
                     help='min learning rate for cosine scheduler')
 parser.add_argument('--weight_decay', type=float, default=0.0,
@@ -143,6 +143,8 @@ args.work_dir += "deq"
 #args.cuda = torch.cuda.is_available()
     
 assert args.batch_size % args.batch_chunk == 0
+if args.mode == "direct" or args.pretrain_steps >0:
+    assert args.n_layer > 0
 
 args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
 timestamp = time.strftime('%Y%m%d-%H%M%S')
@@ -197,8 +199,7 @@ for split in dataset:
 ###############################################################################
 
 
-model = QDEQCircuit(args.dataset,pretrain_steps=args.pretrain_steps, device=device,
-                    f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
+model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
 
 #### optimizer
 optimizer = getattr(optim if args.optim != 'RAdam' else radam, args.optim)(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -341,7 +342,8 @@ def train():
 
             eval_start_time = time.time()
 
-        if train_step == args.pretrain_steps and (args.pretrain_steps - args.start_train_steps) > 4000:
+        #if train_step == args.pretrain_steps and (args.pretrain_steps - args.start_train_steps) > 4000:
+        if train_step == args.pretrain_steps:
             print("You are using pre-training, which has completed :-)")
             model.save_weights(args.work_dir, f"pretrain_{train_step}_{args.name}")
             torch.cuda.empty_cache()

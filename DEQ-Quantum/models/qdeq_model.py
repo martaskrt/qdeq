@@ -119,17 +119,16 @@ def square_loss(targets, predictions):
 loss_fn = square_loss
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, dataset, pretrain_steps=1, device=None, 
-                 f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
+    def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
         super().__init__()
         self.pretrain_steps = pretrain_steps
 
-        #self.n_layer = n_layer
-        #self.eval_n_layer = eval_n_layer
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.input_conv = ImgFilter()
         self.device = device
         self.dataset = dataset
+        self.mode = mode
+        self.n_layer = n_layer
         if self.dataset == "mnist":
             self.func = QFCModel().to(device)
             # classifier:
@@ -158,19 +157,17 @@ class QDEQCircuit(nn.Module):
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
-        deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
+        #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
 
         # warming up the weights:
-        if not deq_mode:
-            n_layer = self.n_layer if self.training or train_step > 0 else self.eval_n_layer
-            for i in range(n_layer):
+        if self.mode =="direct" or train_step < self.pretrain_steps:
+            for i in range(self.n_layer):
                 z1s = self.func(z1s, *func_args)
             new_z1s = z1s
-        else:
+        elif self.mode=="implicit":
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
-            if False:
-            #with torch.no_grad():
+            with torch.no_grad():
                 # print("z1s before entering solver", torch.norm(z1s))
                 result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
@@ -201,8 +198,9 @@ class QDEQCircuit(nn.Module):
                                                                      threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
+        core_out = new_z1s
         if self.dataset == "mnist":
-            core_out = self.iodrop(new_z1s, 0.05)
+            core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
