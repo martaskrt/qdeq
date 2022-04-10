@@ -18,6 +18,7 @@ class FourierDataset:
                  split: str,
                  n_valid_samples,
                  n_train_samples,
+                 n_test_samples,
                  device
                  ):
         self.n_valid_samples = n_valid_samples

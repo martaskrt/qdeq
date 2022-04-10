@@ -25,7 +25,7 @@ from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
 # class FourierModel(nn.Module):
-class FourierModel(toq.QuantumModule):
+class FourierModel(tq.QuantumModule):
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
@@ -34,32 +34,33 @@ class FourierModel(toq.QuantumModule):
         # - RY(param) - RZ(param) - RY(param) - RX(data) -
         # additionally, after the last layer, there's an extra
         # parametrized RY-RZ-RY sequence
-        self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
 
         # Unfortunately does not work generic but have to hard-code
 
-        self.rx = toq.RX(has_params=True, trainable=False)
+        self.rx = tq.RX(has_params=True, trainable=False)
 
-        self.ry00 = toq.RY(has_params=True, trainable=True)
-        self.ry01 = toq.RY(has_params=True, trainable=True)
-        self.ry10 = toq.RY(has_params=True, trainable=True)
-        self.ry11 = toq.RY(has_params=True, trainable=True)
-        self.rz0 = toq.RY(has_params=True, trainable=True)
-        self.rz1 = toq.RY(has_params=True, trainable=True)
+        self.ry00 = tq.RY(has_params=True, trainable=True)
+        self.ry01 = tq.RY(has_params=True, trainable=True)
+        self.ry10 = tq.RY(has_params=True, trainable=True)
+        self.ry11 = tq.RY(has_params=True, trainable=True)
+        self.rz0 = tq.RY(has_params=True, trainable=True)
+        self.rz1 = tq.RY(has_params=True, trainable=True)
 
-        self.ry20 = toq.RY(has_params=True, trainable=True)
-        self.ry21 = toq.RY(has_params=True, trainable=True)
-        self.ry30 = toq.RY(has_params=True, trainable=True)
-        self.ry31 = toq.RY(has_params=True, trainable=True)
-        self.rz2 = toq.RY(has_params=True, trainable=True)
-        self.rz3 = toq.RY(has_params=True, trainable=True)
+        self.ry20 = tq.RY(has_params=True, trainable=True)
+        self.ry21 = tq.RY(has_params=True, trainable=True)
+        self.ry30 = tq.RY(has_params=True, trainable=True)
+        self.ry31 = tq.RY(has_params=True, trainable=True)
+        self.rz2 = tq.RY(has_params=True, trainable=True)
+        self.rz3 = tq.RY(has_params=True, trainable=True)
 
         # Peform Pauli-Z measurement
-        self.measure = toq.MeasureAll(toq.PauliZ)
+        self.measure = tq.MeasureAll(tq.PauliZ)
 
 
-    # @toq.static_support
     def forward(self, x):
+        # Reshape from (bsz, 1, 1) to (bsz,) if necessary
+        x = x.reshape((x.shape[0],)) 
         y = torch.zeros_like(x, dtype=torch.cfloat)
         for i, x_ in enumerate(x):
             self.q_device.reset_states(1)
@@ -226,7 +227,8 @@ class QDEQCircuit(nn.Module):
             func_args = [u1s]
             z1s = torch.zeros((bsz, 1, 16), requires_grad=True)
         elif self.dataset == "fourier":
-            bsz, _, qlen = x.shape
+            # bsz, _, qlen = x.shape
+            bsz = x.shape[0]
             func_args = []
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
