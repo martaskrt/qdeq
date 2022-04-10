@@ -10,57 +10,66 @@ from torchvision import datasets, transforms
 from typing import List
 from torchpack.utils.logging import logger
 
+import numpy as np
+np.random.seed(42)
 
-class MNISTDataset:
+class FourierDataset:
     def __init__(self,
                  split: str,
                  n_valid_samples,
                  n_train_samples,
+                 device
                  ):
-        self.train_valid_split_ratio = train_valid_split_ratio
         self.n_valid_samples = n_valid_samples
         self.n_train_samples = n_train_samples
+        self.split = split
 
-        x = np.linspace(-6, 6, 70)
-        y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
-        x = torch.tensor(x, requires_grad=False).to(device)
+        def target_function(x):
+            """Generate a truncated Fourier series, where the data gets re-scaled."""
+            degree = 1  # degree of the target function
+            scaling = 1  # scaling of the data
+            coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
+            coeff0 = 0.1  # coefficient of zero frequency
+            res = coeff0
+            for idx, coeff in enumerate(coeffs):
+                exponent = np.complex128(scaling * (idx+1) * x * 1j)
+                conj_coeff = np.conjugate(coeff)
+                res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
+            return np.real(res)
+        
+        x = np.linspace(-6, 6, self.n_valid_samples + self.n_train_samples)
+        self.y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
+        self.x = torch.tensor(x, requires_grad=False).to(device)
+        idxs = np.arange(self.n_valid_samples + self.n_train_samples)
+        np.random.shuffle(idxs)
 
-    def target_function(self, x):
-        """Generate a truncated Fourier series, where the data gets re-scaled."""
-        degree = 1  # degree of the target function
-        scaling = 1  # scaling of the data
-        coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
-        coeff0 = 0.1  # coefficient of zero frequency
-        res = coeff0
-        for idx, coeff in enumerate(coeffs):
-            exponent = np.complex128(scaling * (idx+1) * x * 1j)
-            conj_coeff = np.conjugate(coeff)
-            res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
-        return np.real(res)
+        if self.split == "train":
+            self.idxs = idxs[:self.n_train_samples]
+           
+        elif self.split == "valid":
+            self.idxs = idxs[self.n_train_samples:]
+
+        self.x = self.x[self.idxs]
+        self.y = self.y[self.idxs]
     def __getitem__(self, index: int):
-        img = self.data[index][0]
-
-        digit = self.digits_of_interest.index(self.data[index][1])
-        instance = {'x': img, 'y': digit}
-
-        return instance
+        return {'x': self.x[index], 'y': self.y[index]}
 
     def __len__(self) -> int:
-        return self.n_instance
+        return len(self.idxs)
 
 
-class MNIST(Dataset):
+class Fourier(Dataset):
     def __init__(self,
-                 n_valid_samples=None,
-                 n_train_samples=None,
-                 ):
+                 n_valid_samples=1000,
+                 n_train_samples=100,
+                 device='cpu'):
 
         super().__init__({
-            split: MNISTDataset(
+            split: FourierDataset(
                 split=split,
                 n_valid_samples=n_valid_samples,
                 n_train_samples=n_train_samples,
-            )
+                device=device)
             for split in ['train', 'valid']
         })
 

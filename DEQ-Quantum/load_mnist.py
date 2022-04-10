@@ -197,10 +197,8 @@ class MNISTDataset:
                   -1. * (img <= self.binarize_threshold)
 
         digit = self.digits_of_interest.index(self.data[index][1])
-        #img = img.reshape((28,28))
-        instance = {'image': img, 'digit': digit}
+        instance = {'x': img, 'y': digit}
 
-        #return img.to('cuda'), torch.tensor(digit, requires_grad=False).to('cuda')
         return instance
 
     def __len__(self) -> int:

@@ -22,6 +22,7 @@ from utils.data_parallel import BalancedDataParallel
 from torch.utils.tensorboard import SummaryWriter
 
 from load_mnist import MNIST
+from load_fourier import Fourier
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--dataset', type=str, default='mnist',
@@ -181,19 +182,20 @@ if args.dataset == "mnist":
             digits_of_interest=[3, 6],
             n_test_samples=75,
         )
-    dataflow = dict()
-    for split in dataset:
-        sampler = torch.utils.data.RandomSampler(dataset[split])
-        
-        dataflow[split] = torch.utils.data.DataLoader(
-            dataset[split],
-            batch_size=args.batch_size,
-            sampler=sampler,
-            num_workers=8,
-            pin_memory=True,
-            ) 
-elif args.dataset == 'qc':
-    pass
+elif args.dataset == "fourier":
+    dataset = Fourier(n_train_samples=10,
+                      n_valid_samples=5)
+dataflow = dict()
+for split in dataset:
+    sampler = torch.utils.data.RandomSampler(dataset[split])
+    
+    dataflow[split] = torch.utils.data.DataLoader(
+        dataset[split],
+        batch_size=args.batch_size,
+        sampler=sampler,
+        num_workers=8,
+        pin_memory=True,
+        ) 
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -228,8 +230,8 @@ def evaluate(dataflow):
         mems = []
         #for i, (data, target, seq_len) in enumerate(eval_iter):
         for batch, data in enumerate(dataflow['valid']):
-            x = data['image'].to(device)
-            target = data['digit'].to(device)
+            x = data['x'].to(device)
+            target = data['y'].to(device)
             ret = model(x, target, mems, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
             loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
             loss = loss.mean()
@@ -268,8 +270,8 @@ def train():
     for batch, data in enumerate(dataflow['train']):    
         #data = x[batch].reshape(args.batch_size,1, -1)
         #target = y[batch].reshape(args.batch_size, -1)
-        x = data['image'].to(device)
-        target = data['digit'].to(device)
+        x = data['x'].to(device)
+        target = data['y'].to(device)
         if train_step < args.start_train_steps:
             train_step += 1
             continue
