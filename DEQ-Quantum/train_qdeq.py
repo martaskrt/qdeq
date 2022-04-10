@@ -151,9 +151,9 @@ timestamp = time.strftime('%Y%m%d-%H%M%S')
 if args.restart_dir:
     timestamp = args.restart_dir.split('/')[1]
 args.work_dir = os.path.join(args.work_dir, timestamp)
-if args.name == "N/A" and not args.debug:
+#if args.name == "N/A" and not args.debug:
     # If you find this too annoying, uncomment the following line and use timestamp as name.
-    args.name = timestamp
+args.name += "_" + timestamp
     #raise ValueError("Please give a name to your run!")
 logging = create_exp_dir(args.work_dir,
     scripts_to_save=['train_qdeq.py', 'models/qdeq_model.py', '../lib/solvers.py'], debug=args.debug)
@@ -182,7 +182,8 @@ if args.dataset == "mnist":
         )
 elif args.dataset == "fourier":
     dataset = Fourier(n_train_samples=10,
-                      n_valid_samples=5)
+                      n_valid_samples=5,
+                      n_test_samples=5)
 dataflow = dict()
 for split in dataset:
     sampler = torch.utils.data.RandomSampler(dataset[split])
@@ -217,7 +218,7 @@ if args.scheduler == 'cosine':
 # Training code
 ###############################################################################
 
-def evaluate(dataflow):
+def evaluate(data_subset):
     global train_step
     model.eval()
 
@@ -225,7 +226,7 @@ def evaluate(dataflow):
     val_loss, val_acc, val_step = 0, 0, 0
     with torch.no_grad():
         mems = []
-        for batch, data in enumerate(dataflow['valid']):
+        for batch, data in enumerate(data_subset):
             x = data['x'].to(device)
             target = data['y'].to(device)
             ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
@@ -242,7 +243,7 @@ def evaluate(dataflow):
 def train():
     global train_step, train_loss, train_acc, train_jac_loss, best_val_loss, eval_start_time, log_start_time
     model.train()
-
+    
     mems = []
     for batch, data in enumerate(dataflow['train']):    
         x = data['x'].to(device)
@@ -311,7 +312,7 @@ def train():
 
         # Enter evaluation/inference mode once in a while and save the model if needed
         if train_step % args.eval_interval == 0:
-            val_loss, val_acc = evaluate(dataflow)
+            val_loss, val_acc = evaluate(dataflow['valid'])
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
@@ -381,7 +382,7 @@ except KeyboardInterrupt:
 
 
 # Run on test data.
-test_loss = evaluate(te_iter)
+test_loss, test_acc = evaluate(dataflow['test'])
 logging('=' * 100)
-logging('| End of training | test loss {:5.2f} | test ppl {:9.3f}'.format(test_loss, math.exp(test_loss)))
+logging('| End of training | test loss {:5.5f} | test acc {:5.5f} | test ppl {:9.3f}'.format(test_loss, test_acc, math.exp(test_loss)))
 logging('=' * 100)

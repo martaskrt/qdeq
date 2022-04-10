@@ -22,7 +22,9 @@ class FourierDataset:
                  ):
         self.n_valid_samples = n_valid_samples
         self.n_train_samples = n_train_samples
+        self.n_test_samples = n_test_samples
         self.split = split
+        self.n_samples = self.n_valid_samples + self.n_train_samples + self.n_test_samples
 
         def target_function(x):
             """Generate a truncated Fourier series, where the data gets re-scaled."""
@@ -37,18 +39,19 @@ class FourierDataset:
                 res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
             return np.real(res)
         
-        x = np.linspace(-6, 6, self.n_valid_samples + self.n_train_samples)
+        x = np.linspace(-6, 6, self.n_samples)
         self.y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
         self.x = torch.tensor(x, requires_grad=False).to(device)
-        idxs = np.arange(self.n_valid_samples + self.n_train_samples)
+        idxs = np.arange(self.n_samples)
         np.random.shuffle(idxs)
 
         if self.split == "train":
             self.idxs = idxs[:self.n_train_samples]
            
         elif self.split == "valid":
-            self.idxs = idxs[self.n_train_samples:]
-
+            self.idxs = idxs[self.n_train_samples:self.n_train_samples+self.n_valid_samples]
+        elif self.split == "test":
+            self.idxs = idxs[self.n_train_samples+self.n_valid_samples:]
         self.x = self.x[self.idxs]
         self.y = self.y[self.idxs]
     def __getitem__(self, index: int):
@@ -62,6 +65,7 @@ class Fourier(Dataset):
     def __init__(self,
                  n_valid_samples=1000,
                  n_train_samples=100,
+                 n_test_samples=100,
                  device='cpu'):
 
         super().__init__({
@@ -69,8 +73,9 @@ class Fourier(Dataset):
                 split=split,
                 n_valid_samples=n_valid_samples,
                 n_train_samples=n_train_samples,
+                n_test_samples=n_test_samples,
                 device=device)
-            for split in ['train', 'valid']
+            for split in ['train', 'valid', 'test']
         })
 
 
