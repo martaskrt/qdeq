@@ -150,11 +150,8 @@ args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
 timestamp = time.strftime('%Y%m%d-%H%M%S')
 if args.restart_dir:
     timestamp = args.restart_dir.split('/')[1]
-args.work_dir = os.path.join(args.work_dir, timestamp)
-#if args.name == "N/A" and not args.debug:
-    # If you find this too annoying, uncomment the following line and use timestamp as name.
 args.name += "_" + timestamp
-    #raise ValueError("Please give a name to your run!")
+args.work_dir = os.path.join(args.work_dir, args.name)
 logging = create_exp_dir(args.work_dir,
     scripts_to_save=['train_qdeq.py', 'models/qdeq_model.py', '../lib/solvers.py'], debug=args.debug)
 
@@ -223,25 +220,26 @@ def evaluate(data_subset):
     model.eval()
 
     # Evaluation
-    val_loss, val_acc, val_step = 0, 0, 0
+    val_loss, val_acc,val_res, val_step = 0, 0, 0, 0
     with torch.no_grad():
         mems = []
         for batch, data in enumerate(data_subset):
             x = data['x'].to(device)
             target = data['y'].to(device)
             ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
-            loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
+            loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
             loss = loss.mean()
             val_loss += loss.float().item()
             val_acc += acc
+            val_res += res
             val_step += 1
     model.train()
-    return val_loss / val_step, val_acc / val_step
+    return val_loss / val_step, val_acc / val_step, val_res / val_step
 
 
-
+results_dict = {}
 def train():
-    global train_step, train_loss, train_acc, train_jac_loss, best_val_loss, eval_start_time, log_start_time
+    global train_step, train_loss, train_acc, train_res, train_jac_loss, best_val_loss, eval_start_time, log_start_time, results_dict
     model.train()
     
     mems = []
@@ -260,7 +258,7 @@ def train():
 
         # Mode 2: Normal training with one batch per iteration
         ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
-        loss, acc, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4:]
+        loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
         loss = loss.float().mean().type_as(loss)
         jac_loss = jac_loss.float().mean().type_as(loss)
         if compute_jac_loss:
@@ -273,6 +271,7 @@ def train():
           #      print(name, param.grad)
         train_loss += loss.float().item()
         train_acc += acc    
+        train_res += res
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
         train_step += 1
@@ -293,32 +292,39 @@ def train():
         if train_step % args.log_interval == 0:
             cur_loss = train_loss / args.log_interval
             cur_acc = train_acc / args.log_interval
+            cur_res = train_res / args.log_interval
             cur_ppl = math.exp(cur_loss)
             cur_jac_loss = np.mean(train_jac_loss)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
-                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.5f} | acc {:5.5f} | ppl {:9.3f}'.format(
+                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.5f} | acc {:5.5f} | res {:5.5f} | ppl {:9.3f}'.format(
                 epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
-                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_ppl)
+                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_res, cur_ppl)
             logging(log_str)
             train_loss = 0
             train_acc = 0
+            train_res =0 
             train_jac_loss = []
             log_start_time = time.time()
 
+            results_dict[epoch]=[cur_loss, cur_acc, cur_res]
+            
             if writer is not None:
                 writer.add_scalar('result/train_loss', cur_loss, train_step)
                 writer.add_scalar('result/train_ppl', cur_ppl, train_step)
 
         # Enter evaluation/inference mode once in a while and save the model if needed
         if train_step % args.eval_interval == 0:
-            val_loss, val_acc = evaluate(dataflow['valid'])
+            val_loss, val_acc, val_res = evaluate(dataflow['valid'])
+            
+            results_dict[epoch]+=[val_loss, val_acc, val_res]
+            
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.5f} | valid acc {:5.5f} | valid ppl {:9.3f}'.format(
+                      '| valid loss {:5.5f} | valid acc {:5.5f} | valid res {:5.5f} | valid ppl {:9.3f}'.format(
                 train_step // args.eval_interval, train_step,
-                (time.time() - eval_start_time), val_loss, val_acc, val_ppl)
+                (time.time() - eval_start_time), val_loss, val_acc, val_res, val_ppl)
             logging(log_str)
             logging('-' * 100)
 
@@ -361,6 +367,7 @@ def train():
 train_step = 0
 train_loss = 0
 train_acc = 0
+train_res = 0
 train_jac_loss = []
 best_val_loss = None
 
@@ -380,9 +387,33 @@ except KeyboardInterrupt:
     logging('-' * 100)
     logging('Exiting from training early')
 
+# Load the best saved model.
+print("loading best model...")
+with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
+    model = torch.load(f)
+para_model = model.to(device)
 
 # Run on test data.
-test_loss, test_acc = evaluate(dataflow['test'])
+test_loss, test_acc, test_res = evaluate(dataflow['test'])
+results_dict[epoch] += [test_loss, test_acc, test_res]
 logging('=' * 100)
-logging('| End of training | test loss {:5.5f} | test acc {:5.5f} | test ppl {:9.3f}'.format(test_loss, test_acc, math.exp(test_loss)))
+logging('| End of training | test loss {:5.5f} | test acc {:5.5f} | test res {:5.5f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))
 logging('=' * 100)
+with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
+    f.write("epoch,train_loss,train_acc,train_res,val_loss,val_acc,val_res,test_loss,test_acc,test_res\n")
+    for key in range(1, epoch+1):
+        curr_str = str(key)
+        if key == epoch :
+            for i in range(9):
+                curr_str += ",{:5.5f}".format(results_dict[key][i])
+            curr_str += '\n'
+            f.write(curr_str)
+            #f.write(f"{key},{results_dict[key][0],results_dict[key][1],results_dict[key][2],results_dict[key][3],results_dict[key][4],results_dict[key][5],results_dict[key][6],results_dict[key][7],results_dict[key][8]")
+
+        else:
+            for i in range(6):
+                curr_str += ",{:5.5f}".format(results_dict[key][i])
+            curr_str += '\n'
+            f.write(curr_str)
+            #f.write(f"{key},results_dict[key][0],results_dict[key][1],results_dict[key][2],results_dict[key][3],results_dict[key][4],results_dict[key][5]")
+print(results_dict)

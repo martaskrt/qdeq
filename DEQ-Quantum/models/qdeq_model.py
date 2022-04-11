@@ -288,11 +288,14 @@ class QDEQCircuit(nn.Module):
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
         core_out = new_z1s
+        with torch.no_grad():
+            new_z1s_plus1 = self.func(new_z1s, *func_args)
+            residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
         if self.dataset == "mnist":
             core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
         new_mems = None
-        return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1)
+        return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1), residual
     
     def save_weights(self, path, name='pretrained_qdeq'):
         with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
@@ -305,7 +308,7 @@ class QDEQCircuit(nn.Module):
         compute_jac_loss = kwargs.get('compute_jac_loss', True)
         sradius_mode = kwargs.get('spectral_radius_mode', False)
         writer = kwargs.get('writer', None)
-        hidden, new_mems, jac_loss, sradius = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step, 
+        hidden, new_mems, jac_loss, sradius, residual = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step, 
                                                             compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode, 
                                                             writer=writer)
         # get prediction 
@@ -326,6 +329,6 @@ class QDEQCircuit(nn.Module):
             acc = loss.item()
 
         if new_mems is None:
-            return [loss, acc, jac_loss, sradius]
+            return [loss, acc, residual, jac_loss, sradius]
         else:
-            return [loss, acc, jac_loss, sradius] + new_mems
+            return [loss, acc, residual, jac_loss, sradius] + new_mems
