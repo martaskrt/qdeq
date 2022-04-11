@@ -36,8 +36,10 @@ class FourierModel(tq.QuantumModule):
         # parametrized RY-RZ-RY sequence
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
 
+        self.encoder_gates = [tqf.rx]
         # Unfortunately does not work generic but have to hard-code
 
+        #self.rx = tqf.rx
         self.rx = tq.RX(has_params=True, trainable=False)
 
         self.ry00 = tq.RY(has_params=True, trainable=True)
@@ -61,42 +63,53 @@ class FourierModel(tq.QuantumModule):
     def forward(self, x):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
         x = x.reshape((x.shape[0],)) 
+        self.q_device.reset_states(1)
+        # encode the classical image to quantum domain
+        for k, gate in enumerate(self.encoder_gates):
+            gate(self.q_device, wires=k % self.n_wires, params=x[:])
+        
+        #self.ry00(q_device=self.q_device, wires=0)
         y = torch.zeros_like(x, dtype=torch.cfloat)
+        '''
         for i, x_ in enumerate(x):
             self.q_device.reset_states(1)
             # Fix data in encoding gate
-            for n, p in self.named_parameters():
-                if n == 'rx.RX_params':
-                    p.data.fill_(x_)
-
+          #  for n, p in self.named_parameters():
+           #     if n == 'rx.RX_params':
+            #        p.data.fill_(x_)
+            for k, gate in enumerate(self.encoder_gates):
+                gate(self.q_device, wires=k % self.n_wires, params=[x_])
             # Extra rotations in the beginning 
-            self.ry00(q_device=self.q_device, wires=0)
-            self.rz0(q_device=self.q_device, wires=0)
-            self.ry01(q_device=self.q_device, wires=0)
+           '''
+        self.ry00(q_device=self.q_device, wires=0)
+        self.rz0(q_device=self.q_device, wires=0)
+        self.ry01(q_device=self.q_device, wires=0)
 
-            # First layer
-            self.rx(q_device=self.q_device, wires=0)
+        # First layer
+        self.rx(q_device=self.q_device, wires=0)
 
-            self.ry10(q_device=self.q_device, wires=0)
-            self.rz1(q_device=self.q_device, wires=0)
-            self.ry11(q_device=self.q_device, wires=0)
+        self.ry10(q_device=self.q_device, wires=0)
+        self.rz1(q_device=self.q_device, wires=0)
+        self.ry11(q_device=self.q_device, wires=0)
 
-            # Second layer
-            self.rx(q_device=self.q_device, wires=0)
+        # Second layer
+        self.rx(q_device=self.q_device, wires=0)
 
-            self.ry20(q_device=self.q_device, wires=0)
-            self.rz2(q_device=self.q_device, wires=0)
-            self.ry21(q_device=self.q_device, wires=0)
+        self.ry20(q_device=self.q_device, wires=0)
+        self.rz2(q_device=self.q_device, wires=0)
+        self.ry21(q_device=self.q_device, wires=0)
 
-            # Third layer
-            self.rx(q_device=self.q_device, wires=0)
+        # Third layer
+        self.rx(q_device=self.q_device, wires=0)
 
-            self.ry30(q_device=self.q_device, wires=0)
-            self.rz3(q_device=self.q_device, wires=0)
-            self.ry31(q_device=self.q_device, wires=0)
-
+        self.ry30(q_device=self.q_device, wires=0)
+        self.rz3(q_device=self.q_device, wires=0)
+        self.ry31(q_device=self.q_device, wires=0)
+        '''
             y[i] = self.measure(self.q_device)
-
+        '''
+        y = self.measure(self.q_device)
+         
         return y
 
 def mse_loss(x, y):

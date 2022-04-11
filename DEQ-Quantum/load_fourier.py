@@ -41,7 +41,10 @@ class FourierDataset:
             return np.real(res)
         
         x = np.linspace(-6, 6, self.n_samples)
+        #self.y = np.linspace(-6, 6, self.n_samples)
         self.y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
+        #self.y = np.array([target_function(x_) for x_ in x])
+        #self.x = x
         self.x = torch.tensor(x, requires_grad=False).to(device)
         idxs = np.arange(self.n_samples)
         np.random.shuffle(idxs)
