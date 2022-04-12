@@ -118,8 +118,7 @@ def mse_loss(x, y):
     return loss
 
 loss_fn_fourier = mse_loss
-
-class QFCModel(nn.Module):
+class QFCModel2(nn.Module):
     def __init__(self):
         super().__init__()
         self.n_wires = 4
@@ -180,6 +179,72 @@ class QFCModel(nn.Module):
         out = self.rescale(x)
         return out
 
+class QFCModel(tq.QuantumModule):
+    class QLayer(tq.QuantumModule):
+        def __init__(self):
+            super().__init__()
+            self.n_wires = 4
+            self.random_layer = tq.RandomLayer(n_ops=50,
+                                               wires=list(range(self.n_wires)), seed=1111)
+
+            # gates with trainable parameters
+            self.rx0 = tq.RX(has_params=True, trainable=True)
+            self.ry0 = tq.RY(has_params=True, trainable=True)
+            self.rz0 = tq.RZ(has_params=True, trainable=True)
+            self.crx0 = tq.CRX(has_params=True, trainable=True)
+        
+        @tq.static_support
+        def forward(self, q_device: tq.QuantumDevice):
+            """
+            1. To convert tq QuantumModule to qiskit or run in the static
+            model, need to:
+                (1) add @tq.static_support before the forward
+                (2) make sure to add
+                    static=self.static_mode and
+                    parent_graph=self.graph
+                    to all the tqf functions, such as tqf.hadamard below
+            """
+            self.q_device = q_device
+
+            self.random_layer(self.q_device)
+
+            # some trainable gates (instantiated ahead of time)
+            self.rx0(self.q_device, wires=0)
+            self.ry0(self.q_device, wires=1)
+            self.rz0(self.q_device, wires=3)
+            self.crx0(self.q_device, wires=[0, 2])
+
+            # add some more non-parameterized gates (add on-the-fly)
+            tqf.hadamard(self.q_device, wires=3, static=self.static_mode,
+                         parent_graph=self.graph)
+            tqf.sx(self.q_device, wires=2, static=self.static_mode,
+                   parent_graph=self.graph)
+            tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
+                     parent_graph=self.graph)
+
+    def __init__(self):
+        super().__init__()
+        self.n_wires = 4
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+        self.encoder = tq.GeneralEncoder(
+            tq.encoder_op_list_name_dict['4x4_ryzxy'])
+
+        self.q_layer = self.QLayer()
+        self.measure = tq.MeasureAll(tq.PauliZ)
+        self.rescale = nn.Upsample(scale_factor=8)
+    def forward(self, x, injection):
+        bsz = x.shape[0]
+        x = x.squeeze() + injection.squeeze()
+        x = x.view(bsz, 16)
+        self.encoder(self.q_device, x)
+        self.q_layer(self.q_device)
+        x = self.measure(self.q_device)
+        x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+        x = F.log_softmax(x, dim=1)
+        x = x.reshape(x.shape[0], 1, -1)
+        out = self.rescale(x)
+        return out
+
 class ImgFilter(nn.Module):
     def __init__(self):
         super().__init__()
@@ -193,7 +258,7 @@ class ImgFilter(nn.Module):
                                   nn.ReLU(inplace=True))
     def forward(self, x):
         out = F.avg_pool2d(x, 6).view(x.shape[0], 16)
-        # out = self.conv2(x)
+        #out = self.conv(x)
         return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
@@ -201,9 +266,13 @@ class CLS(nn.Module):
         super().__init__()
         self.lin = nn.Sequential(nn.Linear(16,2),
                                  #nn.ReLU(inplace=True),
-                                 nn.Linear(2,2))
+                                 #nn.Linear(2,2)
+                                 )
     def forward(self, x):
-        return  F.log_softmax(self.lin(x), dim=1)
+        h = self.lin(x)
+        out = F.log_softmax(h, dim=1)
+        #print(out)
+        return out
 
 class QDEQCircuit(nn.Module):
     def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
