@@ -6,6 +6,8 @@ import os, sys
 import itertools
 import numpy as np
 import random
+from codecarbon import EmissionsTracker
+
 
 import torch
 import torch.nn as nn
@@ -176,6 +178,7 @@ if args.dataset == "mnist":
             train_valid_split_ratio=[0.9, 0.1],
             digits_of_interest=[3, 6],
             n_test_samples=75,
+            device=device
         )
 elif args.dataset == "fourier":
     dataset = Fourier(n_train_samples=10,
@@ -183,14 +186,18 @@ elif args.dataset == "fourier":
                       n_test_samples=5)
 dataflow = dict()
 for split in dataset:
-    sampler = torch.utils.data.RandomSampler(dataset[split])
-    
+    sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
+    num_workers=8
+    pin_memory=True
+    if args.cuda:
+        num_workers=0
+        pin_memory=False
     dataflow[split] = torch.utils.data.DataLoader(
         dataset[split],
         batch_size=args.batch_size,
         sampler=sampler,
-        num_workers=8,
-        pin_memory=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
         ) 
 ###############################################################################
 # Build the model
@@ -239,7 +246,7 @@ def evaluate(data_subset):
 
 results_dict = {}
 def train():
-    global train_step, train_loss, train_acc, train_res, train_jac_loss, best_val_loss, eval_start_time, log_start_time, results_dict
+    global train_step, train_loss, train_acc, train_res, train_jac_loss, best_val_loss, eval_start_time, log_start_time, results_dict, device
     model.train()
     
     mems = []
@@ -257,6 +264,7 @@ def train():
         b_thres = args.b_thres
 
         # Mode 2: Normal training with one batch per iteration
+        #memory_before_fp = torch.cuda.memory_allocated()
         ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=f_thres, b_thres=b_thres, compute_jac_loss=compute_jac_loss, writer=writer)
         loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
         loss = loss.float().mean().type_as(loss)
@@ -265,6 +273,8 @@ def train():
             (loss + jac_loss * args.jac_loss_weight).backward()
             train_jac_loss.append(jac_loss.float().item())
         else:
+            # memory_consumption = torch.cuda.memory_allocated()
+            #print("memory consumption after fp:", memory_consumption - memory_before_fp)
             loss.backward()
         #for name, param in model.named_parameters():
          #   if param.requires_grad:
@@ -297,7 +307,7 @@ def train():
             cur_jac_loss = np.mean(train_jac_loss)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
-                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.5f} | acc {:5.5f} | res {:5.5f} | ppl {:9.3f}'.format(
+                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.7f} | acc {:5.7f} | res {:5.7f} | ppl {:9.3f}'.format(
                 epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
                 elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_res, cur_ppl)
             logging(log_str)
@@ -322,7 +332,7 @@ def train():
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.5f} | valid acc {:5.5f} | valid res {:5.5f} | valid ppl {:9.3f}'.format(
+                      '| valid loss {:5.7f} | valid acc {:5.7f} | valid res {:5.7f} | valid ppl {:9.3f}'.format(
                 train_step // args.eval_interval, train_step,
                 (time.time() - eval_start_time), val_loss, val_acc, val_res, val_ppl)
             logging(log_str)
@@ -373,8 +383,10 @@ best_val_loss = None
 
 log_start_time = time.time()
 eval_start_time = time.time()
-
-
+start_time,end_time = 0,0
+tracker = EmissionsTracker()
+tracker.start()
+start_time = time.time()
 # At any point you can hit Ctrl + C to break out of training early.
 try:
     for epoch in itertools.count(start=1):
@@ -386,6 +398,8 @@ try:
 except KeyboardInterrupt:
     logging('-' * 100)
     logging('Exiting from training early')
+emissions: float = tracker.stop()
+end_time = time.time()
 
 # Load the best saved model.
 print("loading best model...")
@@ -397,23 +411,19 @@ para_model = model.to(device)
 test_loss, test_acc, test_res = evaluate(dataflow['test'])
 results_dict[epoch] += [test_loss, test_acc, test_res]
 logging('=' * 100)
-logging('| End of training | test loss {:5.5f} | test acc {:5.5f} | test res {:5.5f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))
+logging('| End of training | test loss {:5.7f} | test acc {:5.7f} | test res {:5.7f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))
 logging('=' * 100)
 with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
     f.write("epoch,train_loss,train_acc,train_res,val_loss,val_acc,val_res,test_loss,test_acc,test_res\n")
     for key in range(1, epoch+1):
         curr_str = str(key)
-        if key == epoch :
-            for i in range(9):
-                curr_str += ",{:5.5f}".format(results_dict[key][i])
-            curr_str += '\n'
-            f.write(curr_str)
-            #f.write(f"{key},{results_dict[key][0],results_dict[key][1],results_dict[key][2],results_dict[key][3],results_dict[key][4],results_dict[key][5],results_dict[key][6],results_dict[key][7],results_dict[key][8]")
+        num_vals = 6
+        if key == epoch:
+            num_vals += 3
 
-        else:
-            for i in range(6):
-                curr_str += ",{:5.5f}".format(results_dict[key][i])
-            curr_str += '\n'
-            f.write(curr_str)
-            #f.write(f"{key},results_dict[key][0],results_dict[key][1],results_dict[key][2],results_dict[key][3],results_dict[key][4],results_dict[key][5]")
-print(results_dict)
+        for i in range(num_vals):
+            curr_str += ",{:5.7f}".format(results_dict[key][i])
+        curr_str += '\n'
+        f.write(curr_str)
+print("RUNTIME:::{:5.5f}".format(end_time - start_time))
+print(f"Emissions: {emissions} kg")
