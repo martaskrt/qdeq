@@ -181,9 +181,9 @@ if args.dataset == "mnist":
             device=device
         )
 elif args.dataset == "fourier":
-    dataset = Fourier(n_train_samples=50,
-                      n_valid_samples=5,
-                      n_test_samples=5)
+    dataset = Fourier(n_train_samples=150,
+                      n_valid_samples=50,
+                      n_test_samples=80)
 dataflow = dict()
 for split in dataset:
     # sampler = torch.utils.data.RandomSampler(dataset[split], device=device)

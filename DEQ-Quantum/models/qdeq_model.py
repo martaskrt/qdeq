@@ -41,6 +41,9 @@ class FourierModel(tq.QuantumModule):
         self.wlayer1 = tq.layers.RYZYLayer0(arch=arch)
         self.wlayer2 = tq.layers.RYZYLayer0(arch=arch)
         self.wlayer3 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer4 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer5 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer6 = tq.layers.RYZYLayer0(arch=arch)
 
         # Peform Pauli-Z measurement
         self.measure = tq.MeasureAll(tq.PauliZ)
@@ -49,7 +52,7 @@ class FourierModel(tq.QuantumModule):
     def forward(self, x):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
         bsz = len(x)
-        x = x.reshape((bsz,))
+        x = x.reshape((bsz, 1))
         self.q_device.reset_states(bsz)
 
         self.wlayer0(q_device=self.q_device)
@@ -65,12 +68,21 @@ class FourierModel(tq.QuantumModule):
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer3(q_device=self.q_device)
 
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer4(q_device=self.q_device)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer5(q_device=self.q_device)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer6(q_device=self.q_device)
+
+
         y = self.measure(self.q_device)
 
         return y.reshape((bsz,))
 
 
 def mse_loss(x, y):
+    assert (x.shape == y.shape)
     delta = torch.square(x - y)
     loss = torch.sum(delta) / len(x)
     return loss
@@ -353,6 +365,7 @@ class QDEQCircuit(nn.Module):
         elif self.dataset == "fourier":
             # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
+            pred = pred.reshape((len(data),)) 
             loss = loss_fn_fourier(pred, target)
             acc = loss.item()
 
