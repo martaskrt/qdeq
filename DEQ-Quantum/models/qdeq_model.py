@@ -23,40 +23,34 @@ from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
-class FourierModel(toq.QuantumModule):
-
-    class OneDataPoint(toq.QuantumModule):
-
-        def __init__(self):
-            super().__init__()
-            self.n_wires = 1
-            self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
-
+class FourierModel(tq.QuantumModule):
 
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
         self.n_wires = 1
-        self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
 
         # Each layer has
         # - RY(param) - RZ(param) - RY(param) - RX(data) -
         # additionally, after the last layer, there's an extra
         # parametrized RY-RZ-RY sequence
-        self.encoder_gate = toqf.rx
+        self.encoder_gate = tqf.rx
         arch = {'n_wires': self.n_wires, 'n_blocks': 1, 'n_layers_per_block': 1}
-        self.wlayer0 = toq.layers.RYZYLayer0(arch=arch)
-        self.wlayer1 = toq.layers.RYZYLayer0(arch=arch)
-        self.wlayer2 = toq.layers.RYZYLayer0(arch=arch)
-        self.wlayer3 = toq.layers.RYZYLayer0(arch=arch)
+        self.wlayer0 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer1 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer2 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer3 = tq.layers.RYZYLayer0(arch=arch)
 
         # Peform Pauli-Z measurement
-        self.measure = toq.MeasureAll(toq.PauliZ)
+        self.measure = tq.MeasureAll(tq.PauliZ)
 
 
     def forward(self, x):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
-        self.q_device.reset_states(1)
+        bsz = len(x)
+        x = x.reshape((bsz,))
+        self.q_device.reset_states(bsz)
 
         self.wlayer0(q_device=self.q_device)
         # First layer
@@ -73,7 +67,7 @@ class FourierModel(toq.QuantumModule):
 
         y = self.measure(self.q_device)
 
-        return y
+        return y.reshape((bsz,))
 
 
 def mse_loss(x, y):
