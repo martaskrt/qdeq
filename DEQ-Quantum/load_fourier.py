@@ -29,6 +29,7 @@ class FourierDataset:
 
         def target_function(x):
             """Generate a truncated Fourier series, where the data gets re-scaled."""
+            '''
             degree = 1  # degree of the target function
             scaling = 1  # scaling of the data
             coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
@@ -39,6 +40,8 @@ class FourierDataset:
                 conj_coeff = np.conjugate(coeff)
                 res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
             return np.real(res)
+            '''
+            return 1/np.sqrt(2)*(np.sin(x) + np.cos(x))
         
         x = np.linspace(-6, 6, self.n_samples)
         #self.y = np.linspace(-6, 6, self.n_samples)

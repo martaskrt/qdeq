@@ -49,9 +49,13 @@ class FourierModel(tq.QuantumModule):
         self.measure = tq.MeasureAll(tq.PauliZ)
 
 
-    def forward(self, x):
+    def forward(self, x, injection):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
         bsz = len(x)
+        injection = injection.reshape((bsz,1))
+        x = x.reshape((bsz, 1))
+        assert (x.shape == injection.shape)
+        x = x + injection
         x = x.reshape((bsz, 1))
         self.q_device.reset_states(bsz)
 
@@ -88,6 +92,7 @@ def mse_loss(x, y):
     return loss
 
 loss_fn_fourier = mse_loss
+
 class QFCModel2(nn.Module):
     def __init__(self):
         super().__init__()
@@ -123,7 +128,6 @@ class QFCModel2(nn.Module):
         
         # encode the classical image to quantum domain
         for k, gate in enumerate(self.encoder_gates):
-            print('heeellooooo', gate)
             gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
         
         # add some trainable gates (need to instantiate ahead of time)
@@ -203,6 +207,7 @@ class QFCModel(tq.QuantumModule):
         self.q_layer = self.QLayer()
         self.measure = tq.MeasureAll(tq.PauliZ)
         self.rescale = nn.Upsample(scale_factor=8)
+
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
@@ -214,9 +219,11 @@ class QFCModel(tq.QuantumModule):
         x = F.log_softmax(x, dim=1)
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
+
         return out
 
 class ImgFilter(nn.Module):
+
     def __init__(self):
         super().__init__()
         # downsampling model from MDEQ model
@@ -282,7 +289,7 @@ class QDEQCircuit(nn.Module):
         elif self.dataset == "fourier":
             # bsz, _, qlen = x.shape
             bsz = x.shape[0]
-            func_args = []
+            func_args = [x.reshape((bsz, 1, 1))]
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
@@ -297,9 +304,11 @@ class QDEQCircuit(nn.Module):
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
+                print('z1sshapebefoa', z1s.shape)
                 # print("z1s before entering solver", torch.norm(z1s))
                 result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
+                print('z1sshapeafter', z1s.shape)
                 # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
             if (not self.training) and spectral_radius_mode:
@@ -330,7 +339,11 @@ class QDEQCircuit(nn.Module):
         core_out = new_z1s
         with torch.no_grad():
             new_z1s_plus1 = self.func(new_z1s, *func_args)
-            residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            if self.dataset == "mnist":
+                residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            elif self.dataset == "fourier":
+                residual = torch.linalg.norm(new_z1s_plus1-new_z1s).item()/\
+                           (torch.linalg.norm(new_z1s)+1e-9)
         if self.dataset == "mnist":
             core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
