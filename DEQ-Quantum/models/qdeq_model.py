@@ -23,94 +23,58 @@ from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
+class FourierModel(toq.QuantumModule):
 
-# class FourierModel(nn.Module):
-class FourierModel(tq.QuantumModule):
+    class OneDataPoint(toq.QuantumModule):
+
+        def __init__(self):
+            super().__init__()
+            self.n_wires = 1
+            self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
+
+
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
         self.n_wires = 1
-        # Each layer has 
+        self.q_device = toq.QuantumDevice(n_wires=self.n_wires)
+
+        # Each layer has
         # - RY(param) - RZ(param) - RY(param) - RX(data) -
         # additionally, after the last layer, there's an extra
         # parametrized RY-RZ-RY sequence
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-
-        self.encoder_gates = [tqf.rx]
-        # Unfortunately does not work generic but have to hard-code
-
-        #self.rx = tqf.rx
-        self.rx = tq.RX(has_params=True, trainable=False)
-
-        self.ry00 = tq.RY(has_params=True, trainable=True)
-        self.ry01 = tq.RY(has_params=True, trainable=True)
-        self.ry10 = tq.RY(has_params=True, trainable=True)
-        self.ry11 = tq.RY(has_params=True, trainable=True)
-        self.rz0 = tq.RY(has_params=True, trainable=True)
-        self.rz1 = tq.RY(has_params=True, trainable=True)
-
-        self.ry20 = tq.RY(has_params=True, trainable=True)
-        self.ry21 = tq.RY(has_params=True, trainable=True)
-        self.ry30 = tq.RY(has_params=True, trainable=True)
-        self.ry31 = tq.RY(has_params=True, trainable=True)
-        self.rz2 = tq.RY(has_params=True, trainable=True)
-        self.rz3 = tq.RY(has_params=True, trainable=True)
+        self.encoder_gate = toqf.rx
+        arch = {'n_wires': self.n_wires, 'n_blocks': 1, 'n_layers_per_block': 1}
+        self.wlayer0 = toq.layers.RYZYLayer0(arch=arch)
+        self.wlayer1 = toq.layers.RYZYLayer0(arch=arch)
+        self.wlayer2 = toq.layers.RYZYLayer0(arch=arch)
+        self.wlayer3 = toq.layers.RYZYLayer0(arch=arch)
 
         # Peform Pauli-Z measurement
-        self.measure = tq.MeasureAll(tq.PauliZ)
+        self.measure = toq.MeasureAll(toq.PauliZ)
 
 
     def forward(self, x):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
-        x = x.reshape((x.shape[0],)) 
         self.q_device.reset_states(1)
-        # encode the classical image to quantum domain
-        for k, gate in enumerate(self.encoder_gates):
-            gate(self.q_device, wires=k % self.n_wires, params=x[:])
-        
-        #self.ry00(q_device=self.q_device, wires=0)
-        y = torch.zeros_like(x, dtype=torch.cfloat)
-        '''
-        for i, x_ in enumerate(x):
-            self.q_device.reset_states(1)
-            # Fix data in encoding gate
-          #  for n, p in self.named_parameters():
-           #     if n == 'rx.RX_params':
-            #        p.data.fill_(x_)
-            for k, gate in enumerate(self.encoder_gates):
-                gate(self.q_device, wires=k % self.n_wires, params=[x_])
-            # Extra rotations in the beginning 
-           '''
-        self.ry00(q_device=self.q_device, wires=0)
-        self.rz0(q_device=self.q_device, wires=0)
-        self.ry01(q_device=self.q_device, wires=0)
 
+        self.wlayer0(q_device=self.q_device)
         # First layer
-        self.rx(q_device=self.q_device, wires=0)
-
-        self.ry10(q_device=self.q_device, wires=0)
-        self.rz1(q_device=self.q_device, wires=0)
-        self.ry11(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer1(q_device=self.q_device)
 
         # Second layer
-        self.rx(q_device=self.q_device, wires=0)
-
-        self.ry20(q_device=self.q_device, wires=0)
-        self.rz2(q_device=self.q_device, wires=0)
-        self.ry21(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer2(q_device=self.q_device)
 
         # Third layer
-        self.rx(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer3(q_device=self.q_device)
 
-        self.ry30(q_device=self.q_device, wires=0)
-        self.rz3(q_device=self.q_device, wires=0)
-        self.ry31(q_device=self.q_device, wires=0)
-        '''
-            y[i] = self.measure(self.q_device)
-        '''
         y = self.measure(self.q_device)
-         
+
         return y
+
 
 def mse_loss(x, y):
     delta = torch.square(x - y)
@@ -153,6 +117,7 @@ class QFCModel2(nn.Module):
         
         # encode the classical image to quantum domain
         for k, gate in enumerate(self.encoder_gates):
+            print('heeellooooo', gate)
             gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
         
         # add some trainable gates (need to instantiate ahead of time)
