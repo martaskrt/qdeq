@@ -4,18 +4,17 @@ if [[ $1 == 'train' ]]; then
     echo 'Run training (QDEQ)...'
     python train_qdeq.py \
         --optim Adam \
-        --cuda \
         --lr 0.005 \
-        --pretrain_steps 0 \
+        --cuda \
         --max_step 1140 \
-        --name qdeq_mnist_direct_justll \
-        --mode direct \
-        --n_layer 1 \
+        --pretrain_steps 380 \
+        --n_layer 3 \
+        --name qdeq_mnist_warmup_10e3l_b10 \
         --f_solver broyden \
         --b_solver broyden \
         --stop_mode rel \
-        --f_thres 50 \
-        --b_thres 50 \
+        --f_thres 10 \
+        --b_thres 10 \
         --jac_loss_weight 0.0 \
         --jac_loss_freq 0.0 \
         --jac_incremental 0 \
