@@ -52,8 +52,8 @@ class FourierModel(tq.QuantumModule):
     def forward(self, x, injection):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
         bsz = len(x)
-        injection = injection.reshape((bsz,1))
-        x = x.reshape((bsz, 1))
+        injection = injection.reshape((bsz,))
+        x = x.reshape((bsz,))
         assert (x.shape == injection.shape)
         x = x + injection
         x = x.reshape((bsz, 1))
@@ -79,13 +79,15 @@ class FourierModel(tq.QuantumModule):
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer6(q_device=self.q_device)
 
-
         y = self.measure(self.q_device)
 
-        return y.reshape((bsz,))
+        return y.reshape((bsz, 1, 1))
 
 
 def mse_loss(x, y):
+    bsz = len(x)
+    x = x.reshape((bsz,))
+    y = y.reshape((bsz,))
     assert (x.shape == y.shape)
     delta = torch.square(x - y)
     loss = torch.sum(delta) / len(x)
@@ -304,11 +306,9 @@ class QDEQCircuit(nn.Module):
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
-                print('z1sshapebefoa', z1s.shape)
                 # print("z1s before entering solver", torch.norm(z1s))
                 result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
-                print('z1sshapeafter', z1s.shape)
                 # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
             if (not self.training) and spectral_radius_mode:
