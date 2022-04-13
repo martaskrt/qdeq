@@ -175,9 +175,10 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 if args.dataset == "mnist":
     dataset = MNIST(
             root='./mnist_data',
-            train_valid_split_ratio=[0.9, 0.1],
+            train_valid_split_ratio=[0.8, 0.2],
+            #train_valid_split_ratio=[0.9, 0.1],
             digits_of_interest=[3, 6],
-            n_test_samples=75,
+            #n_test_samples=1000,
             device=device
         )
 elif args.dataset == "fourier":
@@ -186,10 +187,10 @@ elif args.dataset == "fourier":
                       n_test_samples=80)
 dataflow = dict()
 for split in dataset:
-    # sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
-    sampler = torch.utils.data.RandomSampler(dataset[split])
-    num_workers = 10
-    pin_memory = True
+    print(split, len(dataset[split]))
+    sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
+    num_workers=8
+    pin_memory=True
     if args.cuda:
         num_workers = 0
         pin_memory = False
@@ -223,7 +224,7 @@ if args.scheduler == 'cosine':
 # Training code
 ###############################################################################
 
-def evaluate(data_subset):
+def evaluate(data_subset,test=False):
     global train_step
     model.eval()
 
@@ -234,7 +235,7 @@ def evaluate(data_subset):
         for batch, data in enumerate(data_subset):
             x = data['x'].to(device)
             target = data['y'].to(device)
-            ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer)
+            ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer, debug=test)
             loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
             loss = loss.mean()
             val_loss += loss.float().item()
@@ -365,7 +366,7 @@ def train():
             print("You are using pre-training, which has completed :-)")
             model.save_weights(args.work_dir, f"pretrain_{train_step}_{args.name}")
             torch.cuda.empty_cache()
-            
+            best_val_loss = 0
         if train_step == args.max_step:
             break
 
@@ -389,6 +390,7 @@ start_time,end_time = 0,0
 # tracker.start()
 start_time = time.time()
 # At any point you can hit Ctrl + C to break out of training early.
+
 try:
     for epoch in itertools.count(start=1):
         train()
@@ -399,17 +401,21 @@ try:
 except KeyboardInterrupt:
     logging('-' * 100)
     logging('Exiting from training early')
-# emissions: float = tracker.stop()
-end_time = time.time()
 
+emissions: float = tracker.stop()
+end_time = time.time()
 # Load the best saved model.
 print("loading best model...")
+#with open(os.path.join("./QCdeq-mnist/qdeq_mnist_20220412-160920", 'model.pt'), 'rb') as f:
+#with open(os.path.join("./QCdeq-mnist/qdeq_mnist_warmup_10e2l_b70_20220412-204729", 'model.pt'), 'rb') as f:
 with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
     model = torch.load(f)
 para_model = model.to(device)
 
 # Run on test data.
 test_loss, test_acc, test_res = evaluate(dataflow['test'])
+#print(test_loss, test_acc, test_res)
+#import sys; sys.exit(0)
 results_dict[epoch] += [test_loss, test_acc, test_res]
 logging('=' * 100)
 logging('| End of training | test loss {:5.7f} | test acc {:5.7f} | test res {:5.7f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))

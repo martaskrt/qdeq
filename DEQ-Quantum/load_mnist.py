@@ -38,7 +38,7 @@ class MNISTDataset:
                  fashion,
                  n_train_samples,
                  same_n_samples_each_class=False,
-                 ):
+                 device='cpu'):
         self.root = root
         self.split = split
         self.train_valid_split_ratio = train_valid_split_ratio
@@ -58,8 +58,10 @@ class MNISTDataset:
 
         self.same_n_samples_each_class = same_n_samples_each_class
 
+        self.device=device
         self.load()
         self.n_instance = len(self.data)
+
 
     def _get_indices(self, subset, n_samples):
         sample_ctr = {}
@@ -108,7 +110,8 @@ class MNISTDataset:
             train_len = int(self.train_valid_split_ratio[0] * len(train_valid))
             split = [train_len, len(train_valid) - train_len]
             train_subset, valid_subset = torch.utils.data.random_split(
-                train_valid, split, generator=torch.Generator().manual_seed(1))
+                #train_valid, split, generator=torch.Generator().manual_seed(1))
+                train_valid, split, generator=torch.Generator(self.device).manual_seed(1))
 
             if self.split == 'train':
                 if self.n_train_samples is None:
@@ -209,6 +212,7 @@ class MNIST(Dataset):
     def __init__(self,
                  root: str,
                  train_valid_split_ratio: List[float],
+                 device: str,
                  center_crop=28,
                  resize=28,
                  resize_mode='bilinear',
@@ -237,7 +241,7 @@ class MNIST(Dataset):
                 n_valid_samples=n_valid_samples,
                 fashion=fashion,
                 n_train_samples=n_train_samples,
-            )
+                device=device)
             for split in ['train', 'valid', 'test']
         })
 

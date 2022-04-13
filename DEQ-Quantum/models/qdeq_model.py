@@ -109,21 +109,13 @@ class QFCModel2(nn.Module):
         self.rz0 = tq.RZ(has_params=True, trainable=True)
         self.crx0 = tq.CRX(has_params=True, trainable=True)
     
-        #self.rescale = nn.Linear(2,16)
         self.rescale = nn.Upsample(scale_factor=8)
-        #self.rescale = nn.Linear(4,16)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
         # down-sample the image
-        ## x = x.tile((28,28))
-        #print(x.shape, injection.shape)
-        #x = x.reshape((bsz,1,28,28))
-        
         x = x + injection
         x = x.view(bsz, 16)
-        #print("new x", x.shape)
-        #x = F.avg_pool2d(x, 6).view(bsz, 16)
         
         # reset qubit states
         self.q_device.reset_states(bsz)
@@ -214,11 +206,11 @@ class QFCModel(tq.QuantumModule):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
         x = x.view(bsz, 16)
+        out = x
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
         x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
-        x = F.log_softmax(x, dim=1)
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
 
@@ -238,20 +230,16 @@ class ImgFilter(nn.Module):
                                   nn.ReLU(inplace=True))
     def forward(self, x):
         out = F.avg_pool2d(x, 6).view(x.shape[0], 16)
-        #out = self.conv(x)
         return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
     def __init__(self):
         super().__init__()
-        self.lin = nn.Sequential(nn.Linear(16,2),
-                                 #nn.ReLU(inplace=True),
-                                 #nn.Linear(2,2)
+        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16,2),
                                  )
     def forward(self, x):
-        h = self.lin(x)
+        h = F.avg_pool1d(x, 6).view(x.shape[0], 2)
         out = F.log_softmax(h, dim=1)
-        #print(out)
         return out
 
 class QDEQCircuit(nn.Module):
@@ -280,7 +268,7 @@ class QDEQCircuit(nn.Module):
         self.logging = logging or print
         self.iodrop = VariationalDropout()
 
-    def _forward(self, x, mems=None, f_thres=30, b_thres=40, train_step=-1,
+    def _forward(self, x, debug=False, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
         if self.dataset == "mnist":
             bsz, _, W, H = x.shape
@@ -295,7 +283,6 @@ class QDEQCircuit(nn.Module):
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
-        #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
 
         # warming up the weights:
         if self.mode =="direct" or train_step < self.pretrain_steps:
@@ -306,10 +293,8 @@ class QDEQCircuit(nn.Module):
             # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
-                # print("z1s before entering solver", torch.norm(z1s))
                 result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
-                # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
             if (not self.training) and spectral_radius_mode:
                 with torch.enable_grad():
@@ -354,8 +339,8 @@ class QDEQCircuit(nn.Module):
         with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
             self.logging(f"Saving weight state dict at {name}.pth")
             torch.save(self.state_dict(), f)
-    def forward(self, data, target, mems,  train_step=-1, **kwargs):
-        
+    def forward(self, data, target, mems, debug=False, train_step=-1, **kwargs):
+        #print("debug", debug) 
         f_thres = kwargs.get('f_thres', 30)
         b_thres = kwargs.get('b_thres', 40)
         compute_jac_loss = kwargs.get('compute_jac_loss', True)
@@ -363,7 +348,7 @@ class QDEQCircuit(nn.Module):
         writer = kwargs.get('writer', None)
         hidden, new_mems, jac_loss, sradius, residual = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step, 
                                                             compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode, 
-                                                            writer=writer)
+                                                            writer=writer, debug=debug)
         # get prediction 
         if self.dataset == "mnist":
             pred = self.cls(hidden)
