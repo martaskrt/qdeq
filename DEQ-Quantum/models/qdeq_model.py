@@ -23,101 +23,78 @@ from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
-
-# class FourierModel(nn.Module):
 class FourierModel(tq.QuantumModule):
+
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
         self.n_wires = 1
-        # Each layer has 
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+
+        # Each layer has
         # - RY(param) - RZ(param) - RY(param) - RX(data) -
         # additionally, after the last layer, there's an extra
         # parametrized RY-RZ-RY sequence
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-
-        self.encoder_gates = [tqf.rx]
-        # Unfortunately does not work generic but have to hard-code
-
-        #self.rx = tqf.rx
-        self.rx = tq.RX(has_params=True, trainable=False)
-
-        self.ry00 = tq.RY(has_params=True, trainable=True)
-        self.ry01 = tq.RY(has_params=True, trainable=True)
-        self.ry10 = tq.RY(has_params=True, trainable=True)
-        self.ry11 = tq.RY(has_params=True, trainable=True)
-        self.rz0 = tq.RY(has_params=True, trainable=True)
-        self.rz1 = tq.RY(has_params=True, trainable=True)
-
-        self.ry20 = tq.RY(has_params=True, trainable=True)
-        self.ry21 = tq.RY(has_params=True, trainable=True)
-        self.ry30 = tq.RY(has_params=True, trainable=True)
-        self.ry31 = tq.RY(has_params=True, trainable=True)
-        self.rz2 = tq.RY(has_params=True, trainable=True)
-        self.rz3 = tq.RY(has_params=True, trainable=True)
+        self.encoder_gate = tqf.rx
+        arch = {'n_wires': self.n_wires, 'n_blocks': 1, 'n_layers_per_block': 1}
+        self.wlayer0 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer1 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer2 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer3 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer4 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer5 = tq.layers.RYZYLayer0(arch=arch)
+        self.wlayer6 = tq.layers.RYZYLayer0(arch=arch)
 
         # Peform Pauli-Z measurement
         self.measure = tq.MeasureAll(tq.PauliZ)
 
 
-    def forward(self, x):
+    def forward(self, x, injection):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
-        x = x.reshape((x.shape[0],)) 
-        self.q_device.reset_states(1)
-        # encode the classical image to quantum domain
-        for k, gate in enumerate(self.encoder_gates):
-            gate(self.q_device, wires=k % self.n_wires, params=x[:])
-        
-        #self.ry00(q_device=self.q_device, wires=0)
-        y = torch.zeros_like(x, dtype=torch.cfloat)
-        '''
-        for i, x_ in enumerate(x):
-            self.q_device.reset_states(1)
-            # Fix data in encoding gate
-          #  for n, p in self.named_parameters():
-           #     if n == 'rx.RX_params':
-            #        p.data.fill_(x_)
-            for k, gate in enumerate(self.encoder_gates):
-                gate(self.q_device, wires=k % self.n_wires, params=[x_])
-            # Extra rotations in the beginning 
-           '''
-        self.ry00(q_device=self.q_device, wires=0)
-        self.rz0(q_device=self.q_device, wires=0)
-        self.ry01(q_device=self.q_device, wires=0)
+        bsz = len(x)
+        injection = injection.reshape((bsz,))
+        x = x.reshape((bsz,))
+        assert (x.shape == injection.shape)
+        x = x + injection
+        x = x.reshape((bsz, 1))
+        self.q_device.reset_states(bsz)
 
+        self.wlayer0(q_device=self.q_device)
         # First layer
-        self.rx(q_device=self.q_device, wires=0)
-
-        self.ry10(q_device=self.q_device, wires=0)
-        self.rz1(q_device=self.q_device, wires=0)
-        self.ry11(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer1(q_device=self.q_device)
 
         # Second layer
-        self.rx(q_device=self.q_device, wires=0)
-
-        self.ry20(q_device=self.q_device, wires=0)
-        self.rz2(q_device=self.q_device, wires=0)
-        self.ry21(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer2(q_device=self.q_device)
 
         # Third layer
-        self.rx(q_device=self.q_device, wires=0)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer3(q_device=self.q_device)
 
-        self.ry30(q_device=self.q_device, wires=0)
-        self.rz3(q_device=self.q_device, wires=0)
-        self.ry31(q_device=self.q_device, wires=0)
-        '''
-            y[i] = self.measure(self.q_device)
-        '''
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer4(q_device=self.q_device)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer5(q_device=self.q_device)
+        self.encoder_gate(q_device=self.q_device, wires=0, params=x)
+        self.wlayer6(q_device=self.q_device)
+
         y = self.measure(self.q_device)
-         
-        return y
+
+        return y.reshape((bsz, 1, 1))
+
 
 def mse_loss(x, y):
+    bsz = len(x)
+    x = x.reshape((bsz,))
+    y = y.reshape((bsz,))
+    assert (x.shape == y.shape)
     delta = torch.square(x - y)
     loss = torch.sum(delta) / len(x)
     return loss
 
 loss_fn_fourier = mse_loss
+
 class QFCModel2(nn.Module):
     def __init__(self):
         super().__init__()
@@ -232,6 +209,7 @@ class QFCModel(tq.QuantumModule):
         self.q_layer = self.QLayer()
         self.measure = tq.MeasureAll(tq.PauliZ)
         self.rescale = nn.Upsample(scale_factor=8)
+
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
@@ -243,9 +221,11 @@ class QFCModel(tq.QuantumModule):
         x = F.log_softmax(x, dim=1)
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
+
         return out
 
 class ImgFilter(nn.Module):
+
     def __init__(self):
         super().__init__()
         # downsampling model from MDEQ model
@@ -311,7 +291,7 @@ class QDEQCircuit(nn.Module):
         elif self.dataset == "fourier":
             # bsz, _, qlen = x.shape
             bsz = x.shape[0]
-            func_args = []
+            func_args = [x.reshape((bsz, 1, 1))]
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
@@ -359,7 +339,11 @@ class QDEQCircuit(nn.Module):
         core_out = new_z1s
         with torch.no_grad():
             new_z1s_plus1 = self.func(new_z1s, *func_args)
-            residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            if self.dataset == "mnist":
+                residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            elif self.dataset == "fourier":
+                residual = torch.linalg.norm(new_z1s_plus1-new_z1s).item()/\
+                           (torch.linalg.norm(new_z1s)+1e-9)
         if self.dataset == "mnist":
             core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
@@ -394,6 +378,7 @@ class QDEQCircuit(nn.Module):
         elif self.dataset == "fourier":
             # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
+            pred = pred.reshape((len(data),)) 
             loss = loss_fn_fourier(pred, target)
             acc = loss.item()
 

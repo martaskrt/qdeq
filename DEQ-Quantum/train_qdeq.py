@@ -181,17 +181,18 @@ if args.dataset == "mnist":
             device=device
         )
 elif args.dataset == "fourier":
-    dataset = Fourier(n_train_samples=10,
-                      n_valid_samples=5,
-                      n_test_samples=5)
+    dataset = Fourier(n_train_samples=150,
+                      n_valid_samples=50,
+                      n_test_samples=80)
 dataflow = dict()
 for split in dataset:
-    sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
-    num_workers=8
-    pin_memory=True
+    # sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
+    sampler = torch.utils.data.RandomSampler(dataset[split])
+    num_workers = 10
+    pin_memory = True
     if args.cuda:
-        num_workers=0
-        pin_memory=False
+        num_workers = 0
+        pin_memory = False
     dataflow[split] = torch.utils.data.DataLoader(
         dataset[split],
         batch_size=args.batch_size,
@@ -384,8 +385,8 @@ best_val_loss = None
 log_start_time = time.time()
 eval_start_time = time.time()
 start_time,end_time = 0,0
-tracker = EmissionsTracker()
-tracker.start()
+# tracker = EmissionsTracker()
+# tracker.start()
 start_time = time.time()
 # At any point you can hit Ctrl + C to break out of training early.
 try:
@@ -398,7 +399,7 @@ try:
 except KeyboardInterrupt:
     logging('-' * 100)
     logging('Exiting from training early')
-emissions: float = tracker.stop()
+# emissions: float = tracker.stop()
 end_time = time.time()
 
 # Load the best saved model.
@@ -426,4 +427,4 @@ with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
         curr_str += '\n'
         f.write(curr_str)
 print("RUNTIME:::{:5.5f}".format(end_time - start_time))
-print(f"Emissions: {emissions} kg")
+# print(f"Emissions: {emissions} kg")
