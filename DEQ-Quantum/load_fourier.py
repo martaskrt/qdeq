@@ -28,26 +28,14 @@ class FourierDataset:
         self.n_samples = self.n_valid_samples + self.n_train_samples + self.n_test_samples
 
         def target_function(x):
-            """Generate a truncated Fourier series, where the data gets re-scaled."""
-            '''
-            degree = 1  # degree of the target function
-            scaling = 1  # scaling of the data
-            coeffs = [0.15 + 0.15j]*degree  # coefficients of non-zero frequencies
-            coeff0 = 0.1  # coefficient of zero frequency
-            res = coeff0
-            for idx, coeff in enumerate(coeffs):
-                exponent = np.complex128(scaling * (idx+1) * x * 1j)
-                conj_coeff = np.conjugate(coeff)
-                res += coeff * np.exp(exponent) + conj_coeff * np.exp(-exponent)
-            return np.real(res)
+            ''' our target function, could be modified
+                to e.g. implementation of a truncated Fourier
+                series with certain frequencies and coefficients
             '''
             return 1/np.sqrt(2)*(np.sin(x) + np.cos(x))
         
         x = np.linspace(-6, 6, self.n_samples)
-        #self.y = np.linspace(-6, 6, self.n_samples)
         self.y = torch.tensor([target_function(x_) for x_ in x], requires_grad=False).to(device)
-        #self.y = np.array([target_function(x_) for x_ in x])
-        #self.x = x
         self.x = torch.tensor(x, requires_grad=False).to(device)
         idxs = np.arange(self.n_samples)
         np.random.shuffle(idxs)

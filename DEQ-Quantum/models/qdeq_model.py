@@ -24,7 +24,7 @@ from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
 class FourierModel(tq.QuantumModule):
-
+    ''' Model used to fit Fourier series '''
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
@@ -63,15 +63,13 @@ class FourierModel(tq.QuantumModule):
         # First layer
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer1(q_device=self.q_device)
-
         # Second layer
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer2(q_device=self.q_device)
-
         # Third layer
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer3(q_device=self.q_device)
-
+        # ... etc ...
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
         self.wlayer4(q_device=self.q_device)
         self.encoder_gate(q_device=self.q_device, wires=0, params=x)
@@ -85,6 +83,7 @@ class FourierModel(tq.QuantumModule):
 
 
 def mse_loss(x, y):
+    ''' MSE loss used for FourierModel '''
     bsz = len(x)
     x = x.reshape((bsz,))
     y = y.reshape((bsz,))
@@ -95,60 +94,8 @@ def mse_loss(x, y):
 
 loss_fn_fourier = mse_loss
 
-class QFCModel2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.n_wires = 4
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        self.measure = tq.MeasureAll(tq.PauliZ)
-        
-        self.encoder_gates = [tqf.rx] * 4 + [tqf.ry] * 4 + \
-                             [tqf.rz] * 4 + [tqf.rx] * 4
-        self.rx0 = tq.RX(has_params=True, trainable=True)
-        self.ry0 = tq.RY(has_params=True, trainable=True)
-        self.rz0 = tq.RZ(has_params=True, trainable=True)
-        self.crx0 = tq.CRX(has_params=True, trainable=True)
-    
-        self.rescale = nn.Upsample(scale_factor=8)
-
-    def forward(self, x, injection):
-        bsz = x.shape[0]
-        # down-sample the image
-        x = x + injection
-        x = x.view(bsz, 16)
-        
-        # reset qubit states
-        self.q_device.reset_states(bsz)
-        
-        # encode the classical image to quantum domain
-        for k, gate in enumerate(self.encoder_gates):
-            gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
-        
-        # add some trainable gates (need to instantiate ahead of time)
-        self.rx0(self.q_device, wires=0)
-        self.ry0(self.q_device, wires=1)
-        self.rz0(self.q_device, wires=3)
-        self.crx0(self.q_device, wires=[0, 2])
-        
-        # add some more non-parameterized gates (add on-the-fly)
-        tqf.hadamard(self.q_device, wires=3)
-        tqf.sx(self.q_device, wires=2)
-        tqf.cnot(self.q_device, wires=[3, 0])
-        tqf.qubitunitary(self.q_device, wires=[1, 2], params=[[1, 0, 0, 0],
-                                                              [0, 1, 0, 0],
-                                                              [0, 0, 0, 1j],
-                                                              [0, 0, -1j, 0]])
-
-        # perform measurement to get expectations (back to classical domain)
-        x = self.measure(self.q_device).reshape(bsz, 4)
-
-        x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
-        x = F.log_softmax(x, dim=1)
-        x = x.reshape(x.shape[0], 1, -1)
-        out = self.rescale(x)
-        return out
-
 class QFCModel(tq.QuantumModule):
+    ''' Quantum Classification Model, adapted from torchquantum/mnist_example.py '''
     class QLayer(tq.QuantumModule):
         def __init__(self):
             super().__init__()
@@ -217,7 +164,6 @@ class QFCModel(tq.QuantumModule):
         return out
 
 class ImgFilter(nn.Module):
-
     def __init__(self):
         super().__init__()
         # downsampling model from MDEQ model
@@ -243,6 +189,7 @@ class CLS(nn.Module):
         return out
 
 class QDEQCircuit(nn.Module):
+    ''' Our QDEQ model, adaption of DEQ model '''
     def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
         super().__init__()
         self.pretrain_steps = pretrain_steps
