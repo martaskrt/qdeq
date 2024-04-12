@@ -23,6 +23,21 @@ from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 
+class EquilibriumModel(tq.QuantumModule):
+    def __init__(self):
+        super().__init__()
+        self.n_wires = 4 # chain_size
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+
+    def mesolve(self):
+        pass
+
+    def liouvillian(self, H):
+        pass
+
+    def forward(self, x):
+        pass
+
 
 # class FourierModel(nn.Module):
 class FourierModel(tq.QuantumModule):
@@ -70,17 +85,6 @@ class FourierModel(tq.QuantumModule):
         
         #self.ry00(q_device=self.q_device, wires=0)
         y = torch.zeros_like(x, dtype=torch.cfloat)
-        '''
-        for i, x_ in enumerate(x):
-            self.q_device.reset_states(1)
-            # Fix data in encoding gate
-          #  for n, p in self.named_parameters():
-           #     if n == 'rx.RX_params':
-            #        p.data.fill_(x_)
-            for k, gate in enumerate(self.encoder_gates):
-                gate(self.q_device, wires=k % self.n_wires, params=[x_])
-            # Extra rotations in the beginning 
-           '''
         self.ry00(q_device=self.q_device, wires=0)
         self.rz0(q_device=self.q_device, wires=0)
         self.ry01(q_device=self.q_device, wires=0)
@@ -240,7 +244,6 @@ class QFCModel(tq.QuantumModule):
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
         x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
-        #x = F.log_softmax(x, dim=1)
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
         return out
