@@ -6,7 +6,7 @@ import os, sys
 import itertools
 import numpy as np
 import random
-from codecarbon import EmissionsTracker
+#from codecarbon import EmissionsTracker
 
 
 import torch
@@ -25,6 +25,12 @@ from torch.utils.tensorboard import SummaryWriter
 
 from load_mnist import MNIST
 from load_fourier import Fourier
+
+import wandb
+
+wandb.init(project='qdeq', tags=["mnist", "hparam_sweep"])
+wandb.init(settings=wandb.Settings(code_dir=".."))
+wandb.run.log_code("..")
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--dataset', type=str, default='mnist',
@@ -143,6 +149,9 @@ args.tied = not args.not_tied
 args.pretrain_steps += args.start_train_steps
 args.work_dir += "deq"
 #args.cuda = torch.cuda.is_available()
+
+print("args", args)
+wandb.config.update(args)
     
 assert args.batch_size % args.batch_chunk == 0
 if args.mode == "direct" or args.pretrain_steps >0:
@@ -182,18 +191,19 @@ if args.dataset == "mnist":
             device=device
         )
 elif args.dataset == "fourier":
-    dataset = Fourier(n_train_samples=150,
-                      n_valid_samples=50,
-                      n_test_samples=80)
+    dataset = Fourier(n_train_samples=10,
+                      n_valid_samples=5,
+                      n_test_samples=5)
 dataflow = dict()
 for split in dataset:
     print(split, len(dataset[split]))
-    sampler = torch.utils.data.RandomSampler(dataset[split], device=device)
+    #sampler = torch.utils.data.RandomSampler(dataset[split])
+    sampler = torch.utils.data.RandomSampler(dataset[split], generator=torch.Generator(device=device))
     num_workers=8
     pin_memory=True
     if args.cuda:
-        num_workers = 0
-        pin_memory = False
+        num_workers=0
+        pin_memory=False
     dataflow[split] = torch.utils.data.DataLoader(
         dataset[split],
         batch_size=args.batch_size,
@@ -238,10 +248,11 @@ def evaluate(data_subset,test=False):
             ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer, debug=test)
             loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
             loss = loss.mean()
-            val_loss += loss.float().item()
-            val_acc += acc
-            val_res += res
-            val_step += 1
+            val_loss += loss.float().item() * len(x)
+            val_acc += acc * len(x)
+            val_res += res * len(x)
+            #val_step += 1
+            val_step += len(x)
     model.train()
     return val_loss / val_step, val_acc / val_step, val_res / val_step
 
@@ -252,12 +263,14 @@ def train():
     model.train()
     
     mems = []
+    total_samples = 0
     for batch, data in enumerate(dataflow['train']):    
         x = data['x'].to(device)
         target = data['y'].to(device)
-        if train_step < args.start_train_steps:
-            train_step += 1
-            continue
+        train_step += 1
+        #if train_step < args.start_train_steps:
+        #    train_step += 1
+        #    continue
         model.zero_grad()
 
         # For DEQ:
@@ -281,12 +294,15 @@ def train():
         #for name, param in model.named_parameters():
          #   if param.requires_grad:
           #      print(name, param.grad)
-        train_loss += loss.float().item()
-        train_acc += acc    
-        train_res += res
+
+        train_loss += loss.float().item() * len(x)
+        train_acc += acc * len(x)
+        train_res += res * len(x)
+        total_samples += len(x)
+
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
-        train_step += 1
+        #train_step += 1
 
         # Step-wise learning rate annealing according to some scheduling (we ignore 'constant' scheduling)
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
@@ -302,9 +318,9 @@ def train():
 
         # Logging of training progress
         if train_step % args.log_interval == 0:
-            cur_loss = train_loss / args.log_interval
-            cur_acc = train_acc / args.log_interval
-            cur_res = train_res / args.log_interval
+            cur_loss = train_loss / total_samples #args.log_interval
+            cur_acc = train_acc / total_samples #args.log_interval
+            cur_res = train_res / total_samples #args.log_interval
             cur_ppl = math.exp(cur_loss)
             cur_jac_loss = np.mean(train_jac_loss)
             elapsed = time.time() - log_start_time
@@ -312,10 +328,19 @@ def train():
                       '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.7f} | acc {:5.7f} | res {:5.7f} | ppl {:9.3f}'.format(
                 epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
                 elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_res, cur_ppl)
+
+            wandb.log({"train_loss": cur_jac_loss,
+                       "train_acc": cur_acc,
+                       "train_res": cur_res,
+                       "epoch": epoch,
+                       "train_step": train_step,
+                       "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
+            
             logging(log_str)
             train_loss = 0
             train_acc = 0
             train_res =0 
+            total_samples=0
             train_jac_loss = []
             log_start_time = time.time()
 
@@ -334,11 +359,21 @@ def train():
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.7f} | valid acc {:5.7f} | valid res {:5.7f} | valid ppl {:9.3f}'.format(
+                      '| valid loss {:5.7f} | valid acc {:5.7f} | valid res {:5.7f} | valid ppl {:5.7f}'.format(
                 train_step // args.eval_interval, train_step,
                 (time.time() - eval_start_time), val_loss, val_acc, val_res, val_ppl)
+
+            wandb.log({"val_loss": val_loss,
+                       "val_acc": val_acc,
+                       "val_res": val_res,
+                       "epoch": epoch,
+                       "train_step": train_step,
+                       "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
+            
             logging(log_str)
             logging('-' * 100)
+            #if train_step // args.eval_interval == 10:
+            #    exit()
 
             if writer is not None:
                 writer.add_scalar('result/valid_loss', val_loss, train_step)
@@ -356,8 +391,9 @@ def train():
                 best_val_loss = val_loss
 
             # dev-performance based learning rate annealing
-            if args.scheduler == 'dev_perf':
-                scheduler.step(val_loss)
+
+            #if args.scheduler == 'dev_perf':
+            #    scheduler.step(val_loss)
 
             eval_start_time = time.time()
 
@@ -386,8 +422,8 @@ best_val_loss = None
 log_start_time = time.time()
 eval_start_time = time.time()
 start_time,end_time = 0,0
-# tracker = EmissionsTracker()
-# tracker.start()
+#tracker = EmissionsTracker()
+#tracker.start()
 start_time = time.time()
 # At any point you can hit Ctrl + C to break out of training early.
 
@@ -402,7 +438,7 @@ except KeyboardInterrupt:
     logging('-' * 100)
     logging('Exiting from training early')
 
-emissions: float = tracker.stop()
+#emissions: float = tracker.stop()
 end_time = time.time()
 # Load the best saved model.
 print("loading best model...")
@@ -414,11 +450,15 @@ para_model = model.to(device)
 
 # Run on test data.
 test_loss, test_acc, test_res = evaluate(dataflow['test'])
-#print(test_loss, test_acc, test_res)
-#import sys; sys.exit(0)
+
 results_dict[epoch] += [test_loss, test_acc, test_res]
 logging('=' * 100)
 logging('| End of training | test loss {:5.7f} | test acc {:5.7f} | test res {:5.7f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))
+
+wandb.log({"test_loss": test_loss,
+           "test_acc": test_acc,
+           "test_res": test_res})
+
 logging('=' * 100)
 with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
     f.write("epoch,train_loss,train_acc,train_res,val_loss,val_acc,val_res,test_loss,test_acc,test_res\n")
@@ -433,4 +473,4 @@ with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
         curr_str += '\n'
         f.write(curr_str)
 print("RUNTIME:::{:5.5f}".format(end_time - start_time))
-# print(f"Emissions: {emissions} kg")
+#print(f"Emissions: {emissions} kg")
