@@ -91,8 +91,10 @@ beta = 1/T
 t = 0.1  # Timestep related to the thermalizing map.
 
 H = TFIM_constructor(chain_size, h=0.5)  # Hamiltonian and noise is defined.
+assert H.isherm
 noise = (noise_constructor(chain_size, qt.sigmap(), rate=0.1*np.exp(-beta)) +
          noise_constructor(chain_size, qt.sigmam(), rate=0.1))
+assert np.all(n.iscptp for n in noise)
 
 
 """ Running simulations """
@@ -129,10 +131,13 @@ L = qt.liouvillian(H, noise)
 
 Liou = torch.tensor(L.full(), dtype=torch.cfloat)
 dim = 2**chain_size
-Liou = Liou.reshape((dim,dim,dim,dim))
+
+u = torch.linalg.eig(Liou)
+print(u)
 
 krausis = qt.to_kraus(L)
 krausis_torch = [torch.tensor(kraus.full(), dtype=torch.cfloat) for kraus in krausis]
+
 
 '''
 start = torch.conj(krausis_torch[0].t()) @ krausis_torch[0]
@@ -142,8 +147,8 @@ for k in range(1, len(krausis_torch)):
 
 print(start)
 print(torch.trace(start))
-exit()
 '''
+
 
 # getting rid of the nonsense Krausi
 # krausis_torch = krausis_torch[1:]
@@ -153,29 +158,30 @@ exit()
 # state = torch.tensor(state, dtype=torch.complex64)
 
 
-
+def kraus_witch(kraus, state):
+    assert kraus.shape == state.shape
+    return torch.einsum('ij, jk, lk -> il', kraus, state, torch.conj(kraus))
 
 def apply_liouvillian_via_kraus(krausis):
 
     def wrap_L_func(time, state):
 
-        for kraus in krausis:
-            state = torch.einsum('ij, jk, lk -> il', kraus, state, torch.conj(kraus))
+        state = torch.reshape(state, (dim,dim))
+        state_out = kraus_witch(krausis[0], state)
+        for k in range(1, len(krausis)):
+            state_out += kraus_witch(krausis[k], state)
             # state = torch.einsum('ij, jk, kl -> il', kraus, torch.reshape(state, kraus.shape), torch.conj(kraus.t()))
         # return state.flatten()
-        return state
+        return state_out.flatten()
 
     return wrap_L_func
 
 def apply_liouvillian_via_superoperator(liouvillian):
 
     def wrap_L_func(time, state):
-        state = state.reshape((2,2,2,2,2,2))
+        # state = state.reshape((dim,dim))
 
-        L2 = L.full().reshape((2,2,2,2,2,2,2,2,2,2,2,2))
-        print(L2.shape)
-        # out = torch.einsum('abmn, mn -> ab', Liou, state)
-        out = torch.einsum('abcdefghijkl, ghijkl', Liou, state)
+        out = torch.einsum('mn, n -> m', liouvillian, state)
         # return out.flatten()
         return out
 
@@ -189,12 +195,7 @@ def our_own_euler_forward(L_func, tlist, initial_state):
 
     return current_state
 
-
-
-
 # d/dt rho = L[rho]
-
-
 from torchdiffeq import odeint
 """
     odeint(func, y0, t, *, rtol=1e-7, atol=1e-9, method=None, options=None, event_fn=None)
@@ -204,44 +205,75 @@ def our_mesolve(L_func, initial_state, time_list):
     result = odeint(L_func, initial_state, time_list)
     return result
 
+def prepare_input_state(dim):
+    out = np.zeros((dim,dim), dtype=np.complex128)
+    out[2][2] = 1.+0.j
+    return out
+""" solve stuff, but only for one input and not for 2**1000 """
+# qutip thingies
+# state[i][j] = 1/dim
+state = prepare_input_state(dim)
 
-for i in range(0, 2**chain_size):
-    for j in range(0, 2**chain_size):
-
-        state = zero_matrix  # Setting precisely one entry in the density matrix equal one.
-        state[i][j] = 1./(2**chain_size)
-        # state = qt.Qobj(state, dims=H.dims)  # Wrapping it in QuTiP dictionary.
-        # state = torch.tensor(state, dtype=torch.complex64)
-        state = torch.tensor(state, dtype=torch.cfloat)
-        # state = state.flatten()
-        # print('state before', state.shape, state.flatten().shape)
-
-        # result2 = odeint(apply_liouvillian_via_superoperator(Liou), state, torch.tensor(tlist))
-        # result2 = odeint(apply_liouvillian_via_kraus(krausis_torch), state, torch.tensor(tlist))
-
-        result2 = our_own_euler_forward(apply_liouvillian_via_kraus(krausis_torch), tlist, state)
-        result3 = our_own_euler_forward(apply_liouvillian_via_superoperator(Liou), tlist, state)
+state = qt.Qobj(state, dims=H.dims)  # Wrapping it in QuTiP dictionary.
 
 
+result = qt.mesolve(H, state, tlist, c_ops=noise, options=options)  # Running the actual simulation.
+print(result)
+
+# go brute-force
+final = torch.matrix_exp(Liou*.1)@state.full().flatten()
+
+print(result.states)
+
+print('fnorm', torch.linalg.norm(final - result.states[-1].full().flatten()))
+print('fnorm', torch.linalg.norm(final - result.states[0].full().flatten()))
+exit()
 
 
-        # np.save("./results/stuff_" + str(i) + "_" + str(j) + ".npy", result.final_state.data)  # Saving resulting data.
-    print(i)  # I am an impatient man.
+# pytroch thingies
+state = torch.tensor(prepare_input_state(dim), dtype=torch.cfloat)
+state = state.flatten()
 
+# run thingies
+#   first, with the torchdiffeq solver
+result21 = odeint(apply_liouvillian_via_superoperator(Liou), state, torch.tensor(tlist))
+result22 = odeint(apply_liouvillian_via_kraus(krausis_torch), state, torch.tensor(tlist))
+#   now, with my retarded Euler forward that probs doesn't even work for complex entries
+result31 = our_own_euler_forward(apply_liouvillian_via_superoperator(Liou), tlist, state)
+result32 = our_own_euler_forward(apply_liouvillian_via_kraus(krausis_torch), tlist, state)
 
-
-res2 = result2
-# res2 = result2[-1,:]
-# res2 = res2.reshape((16,16))
+res31 = result31
+res31 = res31.reshape((dim,dim))
+res32 = result32
+res32 = res32.reshape((dim,dim))
+res21 = result21[-1,:]
+res21 = res21.reshape((dim,dim))
+res22 = result22[-1,:]
+res22 = res22.reshape((dim,dim))
 
 res1 = result.states[-1]
-
-
 res1 = torch.tensor(res1.full(), dtype=torch.cfloat)
-print(res1.shape)
+
+d131 = torch.linalg.norm(res1-res31)
+d132 = torch.linalg.norm(res1-res32)
+d121 = torch.linalg.norm(res1-res21)
+d122 = torch.linalg.norm(res1-res22)
+d2131 =  torch.linalg.norm(res21-res31)
+d2122 =  torch.linalg.norm(res21-res22)
+d3132 = torch.linalg.norm(res31-res32)
+d2232 = torch.linalg.norm(res22-res32)
+
+
 
 # print('new final trace', torch.trace(res2))
 
 # print('final distance', torch.linalg.norm(res1.flatten()-res2))
-print('final distance', torch.linalg.norm(res1-res2))
+print('d131', d131)
+print('d132', d132)
+print('d121', d121)
+print('d122', d122)
+print('d2122', d2122)
+print('d3132', d3132)
+print('d2131', d2131)
+print('d2232', d2232)
 # print(res1-res2)
