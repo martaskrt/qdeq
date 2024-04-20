@@ -203,8 +203,10 @@ class EquilibriumModel(tq.QuantumModule):
         return rhs.flatten()
 
 # adjust
-def state_loss(x, y):
-    return 1/2*torch.sum(torch.linalg.svdvals(x-y))
+def state_loss(r1, r2):
+    # return 1/2*torch.sum(torch.linalg.svdvals(r1-r2))
+    _, s, _ = torch.linalg.svd(r1-r2)
+    return 1/2*torch.sum(s)
 loss_fn_thermal = state_loss
 
 
@@ -582,6 +584,10 @@ class QDEQCircuit(nn.Module):
             # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
             loss = loss_fn_fourier(pred, target)
+            acc = loss.item()
+        elif self.dataset == 'thermal':
+            pred = hidden
+            loss = loss_fn_thermal(pred, target)
             acc = loss.item()
 
        # if new_mems is None:
