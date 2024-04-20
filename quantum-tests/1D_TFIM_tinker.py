@@ -85,7 +85,7 @@ def noise_constructor(system_size, operator, rate=0.01):  # Helper code to add i
 
 """ Setting up the system """
 print("Initializing system...")
-chain_size = 3  # Number of qubits.
+chain_size = 7  # Number of qubits.
 T = 273  # "Temperature" // room temperature superconductor
 beta = 1/T
 t = 0.1  # Timestep related to the thermalizing map.
@@ -95,6 +95,12 @@ assert H.isherm
 noise = (noise_constructor(chain_size, qt.sigmap(), rate=0.1*np.exp(-beta)) +
          noise_constructor(chain_size, qt.sigmam(), rate=0.1))
 assert np.all(n.iscptp for n in noise)
+# print(noise)
+
+H_torch = torch.tensor(H.full(), dtype=torch.cfloat)
+for n in noise:
+    print(n)
+noise_tensor_list = [torch.tensor(n.full(), dtype=torch.cfloat) for n in noise]
 
 
 """ Running simulations """
@@ -106,16 +112,17 @@ options = qt.Options(store_final_state=True)  # Asking it to not throw out the d
 for i in range(0, 2**chain_size):
     for j in range(0, 2**chain_size):
 
+        '''
         state = zero_matrix  # Setting precisely one entry in the density matrix equal one.
         state[i][j] = 1
 
         state = qt.Qobj(state, dims=H.dims)  # Wrapping it in QuTiP dictionary.
 
-
         result = qt.mesolve(H, state, tlist, c_ops=noise, options=options)  # Running the actual simulation.
 
 
         np.save("./results/stuff_" + str(i) + "_" + str(j) + ".npy", result.final_state.data)  # Saving resulting data.
+        '''
     print(i)  # I am an impatient man.
 
 
@@ -138,20 +145,6 @@ print(u)
 krausis = qt.to_kraus(L)
 krausis_torch = [torch.tensor(kraus.full(), dtype=torch.cfloat) for kraus in krausis]
 
-
-'''
-start = torch.conj(krausis_torch[0].t()) @ krausis_torch[0]
-for k in range(1, len(krausis_torch)):
-    ks = krausis_torch[k]
-    start += torch.conj(ks.t()) @ ks
-
-print(start)
-print(torch.trace(start))
-'''
-
-
-# getting rid of the nonsense Krausi
-# krausis_torch = krausis_torch[1:]
 
 
 # state = qt.Qobj(state, dims=H.dims)  # Wrapping it in QuTiP dictionary.
@@ -195,8 +188,15 @@ def our_own_euler_forward(L_func, tlist, initial_state):
 
     return current_state
 
+
+import torchdiffeq
+
+
+
+
+
+
 # d/dt rho = L[rho]
-from torchdiffeq import odeint
 """
     odeint(func, y0, t, *, rtol=1e-7, atol=1e-9, method=None, options=None, event_fn=None)
 """
@@ -213,67 +213,38 @@ def prepare_input_state(dim):
 # qutip thingies
 # state[i][j] = 1/dim
 state = prepare_input_state(dim)
+import copy
+state_torch = copy.deepcopy(state)
 
 state = qt.Qobj(state, dims=H.dims)  # Wrapping it in QuTiP dictionary.
 
 
 result = qt.mesolve(H, state, tlist, c_ops=noise, options=options)  # Running the actual simulation.
-print(result)
 
-# go brute-force
-final = torch.matrix_exp(Liou*.1)@state.full().flatten()
+print(result.states[-1])
+out_true = torch.tensor(result.states[-1].full())
 
-print(result.states)
+def lindblad_dissipator(operator, state, gamma:float=1.):
+    return gamma * (operator @ state @ operator.conj().T) - 0.5 * operator.conj().T @ operator @ state - 0.5 * state @ operator.conj().T @ operator
 
-print('fnorm', torch.linalg.norm(final - result.states[-1].full().flatten()))
-print('fnorm', torch.linalg.norm(final - result.states[0].full().flatten()))
-exit()
-
+def lindblad_rhs(t, state, H, noise):
+    state_matrix = state.reshape((dim, dim))
+    rhs = torch.tensor([-1j], dtype=torch.cfloat) * (H @ state_matrix - state_matrix @ H)
+    for n in noise:
+        rhs += lindblad_dissipator(n, state_matrix)
+    return rhs.flatten()
 
 # pytroch thingies
 state = torch.tensor(prepare_input_state(dim), dtype=torch.cfloat)
 state = state.flatten()
 
-# run thingies
-#   first, with the torchdiffeq solver
-result21 = odeint(apply_liouvillian_via_superoperator(Liou), state, torch.tensor(tlist))
-result22 = odeint(apply_liouvillian_via_kraus(krausis_torch), state, torch.tensor(tlist))
-#   now, with my retarded Euler forward that probs doesn't even work for complex entries
-result31 = our_own_euler_forward(apply_liouvillian_via_superoperator(Liou), tlist, state)
-result32 = our_own_euler_forward(apply_liouvillian_via_kraus(krausis_torch), tlist, state)
 
-res31 = result31
-res31 = res31.reshape((dim,dim))
-res32 = result32
-res32 = res32.reshape((dim,dim))
-res21 = result21[-1,:]
-res21 = res21.reshape((dim,dim))
-res22 = result22[-1,:]
-res22 = res22.reshape((dim,dim))
-
-res1 = result.states[-1]
-res1 = torch.tensor(res1.full(), dtype=torch.cfloat)
-
-d131 = torch.linalg.norm(res1-res31)
-d132 = torch.linalg.norm(res1-res32)
-d121 = torch.linalg.norm(res1-res21)
-d122 = torch.linalg.norm(res1-res22)
-d2131 =  torch.linalg.norm(res21-res31)
-d2122 =  torch.linalg.norm(res21-res22)
-d3132 = torch.linalg.norm(res31-res32)
-d2232 = torch.linalg.norm(res22-res32)
+# Solve the master equation
+result = torchdiffeq.odeint(lambda t, y: lindblad_rhs(t, y, H_torch, noise_tensor_list), state, torch.tensor(tlist))
 
 
+out21 = result[-1]
+print(out21)
 
-# print('new final trace', torch.trace(res2))
-
-# print('final distance', torch.linalg.norm(res1.flatten()-res2))
-print('d131', d131)
-print('d132', d132)
-print('d121', d121)
-print('d122', d122)
-print('d2122', d2122)
-print('d3132', d3132)
-print('d2131', d2131)
-print('d2232', d2232)
-# print(res1-res2)
+res_new = torch.real(out21) -1.j* torch.imag(out21)
+print(torch.linalg.norm(out21-out_true.flatten()))

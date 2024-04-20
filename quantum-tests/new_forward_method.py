@@ -96,10 +96,10 @@ class TFIMEvolutionModel:
         print("Initializing Transverse Field Ising Model...")
         self.chain_size = 3  # Number of qubits.
         self.dim = 2**self.chain_size  # Hilbert space dimension
-        self.T = 273  # "Temperature" // room temperature superconductor
+        self.T = 50  # "Temperature" // room temperature superconductor
         self.beta = 1/self.T  # inverse "temperature"
-        self.t = 0.1  # Timestep related to the thermalizing map.
-        self.n_timesteps = 100  # Number of steps to use to reach t
+        self.t = 1  # Timestep related to the thermalizing map.
+        self.n_timesteps = 20 # Number of steps to use to reach t
         self.tlist = torch.linspace(0, self.t, self.n_timesteps)
         self.H = self.TFIM_constructor(self.chain_size, h=0.5)  # Hamiltonian and noise is defined.
         # TODO more hyperparameters hidden in the noise
@@ -117,43 +117,91 @@ class TFIMEvolutionModel:
         self.final_state =  None  # Final state of time evolution
 
     """ Running simulations """
+    # def forward(self, x): -- x here would be the input state I guess, so we should have an in/out situation
     def forward(self):
-        print("Running simulations...")
+        # print("Running simulations...")
         # TODO we could also take the initial state as external input here and just output the output state
         # TODO instead of storing it in the model I guess, depends on what we need for the architecture
         initial_state = self.initial_state.flatten()
 
         # Solve the master equation
         func = lambda t, y: self.lindblad_rhs(t, y, self.H_torch, self.noise_tensor_list)
-        result = torchdiffeq.odeint(func, initial_state, self.tlist)
-        self.output_state = result[-1].reshape((self.dim, self.dim))  # TODO only return final state -- we may be able to modify odeint so that only the final one is outputted anyway? idk
+        result = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')  # dopri5 is standard, ~ RK45
+        self.output_state = result.reshape((-1, self.dim, self.dim))  # TODO only return final state -- we may be able to modify odeint so that only the final one is outputted anyway? idk
 
 # TODO replace this function with  input state from torchquantum output before
 # TODO note that this torchquantum output now is _not_ measured but should also just be a (dim,) sized tensor
 # TODO then, what we probably want is make this a (pure) density matrix, by doing an outer product on it
-def prepare_input_state(dim: int, i: int=2, j: int=2):
+def prepare_input_state_at_ij(dim: int, i: int=2, j: int=2):
     out = np.zeros((dim, dim), dtype=np.complex64)
     out[i][j] = 1.+0.j
     return out
 
+def prepare_random_input_density(dim: int):
+    off_diagonal = np.random.rand(dim, dim)
+    off_diagonal = (off_diagonal + off_diagonal.T) / 2  # Symmetrize the matrix
+
+    # Set diagonal elements to satisfy trace condition
+    np.fill_diagonal(off_diagonal, 1 - np.sum(off_diagonal, axis=1) + off_diagonal.diagonal())
+
+    # Normalize to ensure trace equal to 1
+    rho = off_diagonal / np.trace(off_diagonal)
+
+    return np.array(rho, dtype=np.complex64)
+
 """ Experimenting """
 model = TFIMEvolutionModel()
 # Looping over all elements to check equality
+
+
+input_state = torch.tensor(prepare_random_input_density(model.dim))
+print('trace input', torch.trace(input_state))
+model.initial_state = input_state
+model.forward()
+out_torch = model.output_state
+for i in range(len(model.tlist)):
+    print('trace at j', model.tlist[i], torch.trace(out_torch[i]))
+out_torch = out_torch[-1,:,:]
+state_qt = prepare_random_input_density(model.dim)
+state_qt = qt.Qobj(state_qt, dims=model.H.dims)
+print('input qt trace', state_qt.tr())
+tlist = np.array(model.tlist.detach())
+options = qt.Options(store_final_state=True, method='bdf')  # Asking it to not throw out the data we need.
+result_qt = qt.mesolve(model.H, state_qt, tlist, c_ops=model.noise, options=options)  # Running the actual simulation.
+for state in result_qt.states:
+    print('trace at j', state.tr())
+# print('trace mesolve', result_qt.states[-1].tr())
+
+print('our output: ', model.dim*out_torch)
+print('qt output: ', model.dim*result_qt.states[-1])
+out_true = torch.tensor(result_qt.states[-1].full())
+
+print(torch.linalg.norm(out_torch-out_true, ord=1))
+
+exit()
 for i in range(model.dim):
     for j in range(model.dim):
-        input_state = torch.tensor(prepare_input_state(model.dim, i, j), dtype=torch.cfloat)
+        print('simulating for rho_0 = |{I}><{J}|'.format(I=i,J=j))
+        input_state = torch.tensor(prepare_input_state_at_ij(model.dim, i, j), dtype=torch.cfloat)
         model.initial_state = input_state
         model.forward()
         out_torch = model.output_state
+        print('trace', torch.trace(out_torch))
+
 
         """ Here is just code for verification """
-        state_qt = prepare_input_state(model.dim, i, j)
+        state_qt = prepare_input_state_at_ij(model.dim, i, j)
 
         state_qt = qt.Qobj(state_qt, dims=model.H.dims)  # Wrapping it in QuTiP dictionary.
 
         tlist = np.array(model.tlist.detach())
+        # options = qt.Options(method='bdf', order=5, store_final_state=True)  # Asking it to not throw out the data we need.
         options = qt.Options(store_final_state=True)  # Asking it to not throw out the data we need.
         result_qt = qt.mesolve(model.H, state_qt, tlist, c_ops=model.noise, options=options)  # Running the actual simulation.
+
+        if not i == j and False:
+            print('torch', out_torch)
+            print('qt', result_qt.states[-1])
 
         # print('our output: ', out_torch)
         # print('lasse output: ', result_qt.states[-1])
