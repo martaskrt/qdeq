@@ -33,9 +33,9 @@ class EquilibriumModel(tq.QuantumModule):
 
     class QLayer(tq.QuantumModule):
         # TODO: make this more tailored to the application
-        def __init__(self):
+        def __init__(self, n_wires):
             super().__init__()
-            self.n_wires = 4
+            self.n_wires = n_wires
             self.random_layer = tq.RandomLayer(n_ops=50,
                                                wires=list(range(self.n_wires)), seed=1111)
 
@@ -81,10 +81,10 @@ class EquilibriumModel(tq.QuantumModule):
         """ set up quantum circuit """
         # intitialize QuantumModule to provide parametrized quantum circuit
         super().__init__()
-        self.n_wires = 4 # ==chain_size
+        self.n_wires = 4  # ==chain_size
         # Prepare quantum state and parametrized quantum circuit
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        self.q_layer = self.QLayer()
+        self.q_layer = self.QLayer(n_wires=self.n_wires)
         # maybe also check the torchquantum density functionality. not sure though if they can
         # do parametrized density matrices
 
@@ -206,9 +206,6 @@ class EquilibriumModel(tq.QuantumModule):
 def state_loss(x, y):
     return 1/2*torch.sum(torch.linalg.svdvals(x-y))
 loss_fn_thermal = state_loss
-
-
-
 
 
 # class FourierModel(nn.Module):
