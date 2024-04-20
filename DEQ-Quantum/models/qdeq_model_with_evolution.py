@@ -491,8 +491,7 @@ class QDEQCircuit(nn.Module):
         elif self.dataset == 'thermal': # @Philipp edit here
             bsz = 1
             # might need some reshapes regarding bsz
-            z1s = torch.zeros((bsz, 1, self.dim))
-            pass
+            z1s = torch.zeros((bsz, 1, self.func.dim))
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
