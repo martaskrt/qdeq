@@ -16,7 +16,8 @@ import torch.optim as optim
 sys.path.append('../')
 
 from data_utils import get_lm_corpus
-from models.qdeq_model import QDEQCircuit
+from models.qdeq_model_temp import QDEQCircuit
+from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal 
 from lib.solvers import anderson, broyden
 from lib import radam
 from utils.exp_utils import create_exp_dir
@@ -28,14 +29,17 @@ from load_fourier import Fourier
 
 import wandb
 
-wandb.init(project='qdeq', tags=["mnist", "hparam_sweep"])
+wandb.init(project='qdeq', tags=["mnist", "hparam_sweep", "4c"])
 wandb.init(settings=wandb.Settings(code_dir=".."))
 wandb.run.log_code("..")
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--dataset', type=str, default='mnist',
-                    choices=['fourier', "mnist"],
+                    choices=['fourier', "mnist", "thermal"],
                     help='dataset name')
+parser.add_argument('--num_classes', type=int, default=2,
+                    choices=[2,4],
+                    help='numeber of mnist classes')
 parser.add_argument('--mode', type=str, default='implicit',
                     choices=['implicit', 'direct'])
 parser.add_argument('--n_layer', type=int, default=-1,
@@ -182,41 +186,55 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 # Load data
 ###############################################################################
 if args.dataset == "mnist":
+    if args.num_classes == 2:
+        classes = [3,6]
+    elif args.num_classes == 4:
+        classes = [0,3,6,9]
     dataset = MNIST(
             root='./mnist_data',
             train_valid_split_ratio=[0.8, 0.2],
             #train_valid_split_ratio=[0.9, 0.1],
-            digits_of_interest=[3, 6],
+            digits_of_interest=classes,
             #n_test_samples=1000,
             device=device
         )
+    
 elif args.dataset == "fourier":
     dataset = Fourier(n_train_samples=10,
                       n_valid_samples=5,
                       n_test_samples=5)
+
 dataflow = dict()
-for split in dataset:
-    print(split, len(dataset[split]))
-    #sampler = torch.utils.data.RandomSampler(dataset[split])
-    sampler = torch.utils.data.RandomSampler(dataset[split], generator=torch.Generator(device=device))
-    num_workers=8
-    pin_memory=True
-    if args.cuda:
-        num_workers=0
-        pin_memory=False
-    dataflow[split] = torch.utils.data.DataLoader(
-        dataset[split],
-        batch_size=args.batch_size,
-        sampler=sampler,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        ) 
+if args.dataset in ["fourier", "mnist"]:
+    for split in dataset:
+        print(split, len(dataset[split]))
+        #sampler = torch.utils.data.RandomSampler(dataset[split])
+        sampler = torch.utils.data.RandomSampler(dataset[split], generator=torch.Generator(device=device))
+        num_workers=8
+        pin_memory=True
+        if args.cuda:
+            num_workers=0
+            pin_memory=False
+        dataflow[split] = torch.utils.data.DataLoader(
+            dataset[split],
+            batch_size=args.batch_size,
+            sampler=sampler,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            ) 
+else:
+    dataflow['train'] = [None]
+    dataflow['valid'] = [None] 
+    dataflow['test'] = [None] 
 ###############################################################################
 # Build the model
 ###############################################################################
 
+if self.dataset == "thermal":
+    model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
 
-model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
+else:
+    model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
 
 #### optimizer
 optimizer = getattr(optim if args.optim != 'RAdam' else radam, args.optim)(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -243,8 +261,11 @@ def evaluate(data_subset,test=False):
     with torch.no_grad():
         mems = []
         for batch, data in enumerate(data_subset):
-            x = data['x'].to(device)
-            target = data['y'].to(device)
+            if args.dataset in ['fourier', 'mnist']:
+                x = data['x'].to(device)
+                target = data['y'].to(device)
+            else:
+                x, target = None, None
             ret = model(x, target, mems, dataset=args.dataset, train_step=train_step, f_thres=args.f_thres, b_thres=args.b_thres, compute_jac_loss=False, writer=writer, debug=test)
             loss, acc, res, jac_loss, _, mems = ret[0], ret[1], ret[2], ret[3], ret[4], ret[5:]
             loss = loss.mean()
@@ -265,12 +286,13 @@ def train():
     mems = []
     total_samples = 0
     for batch, data in enumerate(dataflow['train']):    
-        x = data['x'].to(device)
-        target = data['y'].to(device)
+        if args.dataset != "thermal":
+            x = data['x'].to(device)
+            target = data['y'].to(device)
+        else:
+            x, target = None, None
+
         train_step += 1
-        #if train_step < args.start_train_steps:
-        #    train_step += 1
-        #    continue
         model.zero_grad()
 
         # For DEQ:
@@ -288,12 +310,7 @@ def train():
             (loss + jac_loss * args.jac_loss_weight).backward()
             train_jac_loss.append(jac_loss.float().item())
         else:
-            # memory_consumption = torch.cuda.memory_allocated()
-            #print("memory consumption after fp:", memory_consumption - memory_before_fp)
             loss.backward()
-        #for name, param in model.named_parameters():
-         #   if param.requires_grad:
-          #      print(name, param.grad)
 
         train_loss += loss.float().item() * len(x)
         train_acc += acc * len(x)
@@ -302,7 +319,6 @@ def train():
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
-        #train_step += 1
 
         # Step-wise learning rate annealing according to some scheduling (we ignore 'constant' scheduling)
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
@@ -458,6 +474,8 @@ para_model = model.to(device)
 # Run on test data.
 test_loss, test_acc, test_res = evaluate(dataflow['test'])
 
+if epoch not in results_dict:
+    results_dict[epoch] = []
 results_dict[epoch] += [test_loss, test_acc, test_res]
 logging('=' * 100)
 logging('| End of training | test loss {:5.7f} | test acc {:5.7f} | test res {:5.7f} | test ppl {:9.3f}'.format(test_loss, test_acc, test_res, math.exp(test_loss)))

@@ -122,66 +122,6 @@ def mse_loss(x, y):
     return loss
 
 loss_fn_fourier = mse_loss
-class QFCModel2(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.n_wires = 4
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        self.measure = tq.MeasureAll(tq.PauliZ)
-        
-        self.encoder_gates = [tqf.rx] * 4 + [tqf.ry] * 4 + \
-                             [tqf.rz] * 4 + [tqf.rx] * 4
-        self.rx0 = tq.RX(has_params=True, trainable=True)
-        self.ry0 = tq.RY(has_params=True, trainable=True)
-        self.rz0 = tq.RZ(has_params=True, trainable=True)
-        self.crx0 = tq.CRX(has_params=True, trainable=True)
-    
-        #self.rescale = nn.Linear(2,16)
-        self.rescale = nn.Upsample(scale_factor=8)
-        #self.rescale = nn.Linear(4,16)
-
-    def forward(self, x, injection):
-        bsz = x.shape[0]
-        # down-sample the image
-        ## x = x.tile((28,28))
-        #print(x.shape, injection.shape)
-        #x = x.reshape((bsz,1,28,28))
-        
-        x = x + injection
-        x = x.view(bsz, 16)
-        #print("new x", x.shape)
-        #x = F.avg_pool2d(x, 6).view(bsz, 16)
-        
-        # reset qubit states
-        self.q_device.reset_states(bsz)
-        
-        # encode the classical image to quantum domain
-        for k, gate in enumerate(self.encoder_gates):
-            gate(self.q_device, wires=k % self.n_wires, params=x[:, k])
-        
-        # add some trainable gates (need to instantiate ahead of time)
-        self.rx0(self.q_device, wires=0)
-        self.ry0(self.q_device, wires=1)
-        self.rz0(self.q_device, wires=3)
-        self.crx0(self.q_device, wires=[0, 2])
-        
-        # add some more non-parameterized gates (add on-the-fly)
-        tqf.hadamard(self.q_device, wires=3)
-        tqf.sx(self.q_device, wires=2)
-        tqf.cnot(self.q_device, wires=[3, 0])
-        tqf.qubitunitary(self.q_device, wires=[1, 2], params=[[1, 0, 0, 0],
-                                                              [0, 1, 0, 0],
-                                                              [0, 0, 0, 1j],
-                                                              [0, 0, -1j, 0]])
-
-        # perform measurement to get expectations (back to classical domain)
-        x = self.measure(self.q_device).reshape(bsz, 4)
-
-        x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
-        #x = F.log_softmax(x, dim=1)
-        x = x.reshape(x.shape[0], 1, -1)
-        out = self.rescale(x)
-        return out
 
 class QFCModel(tq.QuantumModule):
     class QLayer(tq.QuantumModule):
@@ -226,7 +166,7 @@ class QFCModel(tq.QuantumModule):
             tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
                      parent_graph=self.graph)
 
-    def __init__(self):
+    def __init__(self, num_classes):
         super().__init__()
         self.n_wires = 4
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
@@ -235,7 +175,12 @@ class QFCModel(tq.QuantumModule):
 
         self.q_layer = self.QLayer()
         self.measure = tq.MeasureAll(tq.PauliZ)
-        self.rescale = nn.Upsample(scale_factor=8)
+        self.num_classes = num_classes 
+        if self.num_classes == 2:
+            self.rescale = nn.Upsample(scale_factor=8)
+        elif self.num_classes == 4:
+            self.rescale = nn.Upsample(scale_factor=4)
+
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
@@ -243,9 +188,11 @@ class QFCModel(tq.QuantumModule):
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
-        x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+        if self.num_classes == 2:
+            x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
+
         return out
 
 class ImgFilter(nn.Module):
@@ -265,20 +212,18 @@ class ImgFilter(nn.Module):
         return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes):
         super().__init__()
-        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16,2),
-                                 #nn.ReLU(inplace=True),
-                                 #nn.Linear(2,2)
+        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16,num_classes),
                                  )
     def forward(self, x):
-        h = self.lin(x)
-        out = F.log_softmax(h, dim=1)
+        out = self.lin(x)
+        #out = F.log_softmax(h, dim=1)
         #print(out)
         return out
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
+    def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
         super().__init__()
         self.pretrain_steps = pretrain_steps
 
@@ -289,9 +234,9 @@ class QDEQCircuit(nn.Module):
         self.mode = mode
         self.n_layer = n_layer
         if self.dataset == "mnist":
-            self.func = QFCModel().to(device)
+            self.func = QFCModel(num_classes).to(device)
             # classifier:
-            self.cls = CLS()
+            self.cls = CLS(num_classes)
         elif self.dataset == "fourier":
             self.func = FourierModel().to(device, dtype=torch.cfloat)
             # print("Fourier model not implemented yet!"); import sys; sys.exit(0)
@@ -394,8 +339,8 @@ class QDEQCircuit(nn.Module):
         # get prediction 
         if self.dataset == "mnist":
             pred = self.cls(hidden)
-            loss = F.nll_loss(pred, target)
-            #loss = nn.CrossEntropyLoss()(pred, target)
+            #loss = F.nll_loss(pred, target)
+            loss = nn.CrossEntropyLoss()(pred, target)
             with torch.no_grad():
                 _, indices = pred.topk(1, dim=1)
                 masks = indices.eq(target.view(-1, 1).expand_as(indices))

@@ -118,9 +118,7 @@ class EquilibriumModel(tq.QuantumModule):
         self.q_layer(self.q_device)
         # not sure about nomenclature of x, z here
         z = self.q_layer.get_states_1d()
-
-        z1 = self.simulate_noise_model(z)
-        return z1
+        return z
 
     def simulate_noise_model(self, x):
         # print("Running simulations...")
@@ -207,7 +205,6 @@ def state_loss(r1, r2):
     # return 1/2*torch.sum(torch.linalg.svdvals(r1-r2))
     _, s, _ = torch.linalg.svd(r1-r2)
     return 1/2*torch.sum(s)
-loss_fn_thermal = state_loss
 
 
 # class FourierModel(nn.Module):
@@ -580,15 +577,16 @@ class QDEQCircuit(nn.Module):
                 corrects = masks.sum().item()
                 acc = corrects / size
 
+
         elif self.dataset == "fourier":
             # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
             loss = loss_fn_fourier(pred, target)
             acc = loss.item()
         elif self.dataset == 'thermal':
-            pred = hidden
-            loss = loss_fn_thermal(pred, target)
-            acc = loss.item()
+            pred = self.simulate_noise_model(hidden)
+            loss = state_loss(pred, hidden)
+            residual = loss
 
        # if new_mems is None:
         return [loss, acc, residual, jac_loss, sradius]

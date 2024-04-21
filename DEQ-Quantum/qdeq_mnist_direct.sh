@@ -1,28 +1,28 @@
 #!/bin/bash
+#SBATCH --time=72:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --ntasks=4
+#SBATCH --mem=40GB
+#SBATCH --job-name qdeq
+#SBATCH --output=./slurm_files/%j.out
+#SBATCH --error=./slurm_files/%j.error
 
-if [[ $1 == 'train' ]]; then
+#conda activate qdeq_2
+
+
+for lr in 0.05 0.01 0.0075 0.005
+do
     echo 'Run training (QDEQ)...'
     python train_qdeq.py \
         --optim Adam \
+	--lr $lr \
         --cuda \
-        --lr 0.005 \
-        --pretrain_steps 0 \
-        --max_step 1140 \
-        --name qdeq_mnist_direct_justll \
+        --scheduler constant \
+        --max_step 3800 \
+        --name qdeq_mnist_direct \
         --mode direct \
-        --n_layer 1 \
-        --f_solver broyden \
-        --b_solver broyden \
-        --stop_mode rel \
-        --f_thres 50 \
-        --b_thres 50 \
-        --jac_loss_weight 0.0 \
-        --jac_loss_freq 0.0 \
-        --jac_incremental 0 \
+        --n_layer 2 \
         --batch_size 256 \
 	--log-interval 38 \
-	--eval-interval 38 \
-        ${@:2}
-else
-    echo 'unknown argment 1'
-fi
+	--eval-interval 38
+done
