@@ -113,12 +113,16 @@ class EquilibriumModel(tq.QuantumModule):
     # we want to change that to a set up circuit, put that into x, and then simulate based on that
     """ x should be self.q_layer.get_states_1d() """
     # def forward(self, x):
-    def forward(self):
-        bsz = 1  # x.shape[0]
+    def forward(self, x):
+        bsz = 1
         self.q_layer(self.q_device)
         # not sure about nomenclature of x, z here
-        z = self.q_layer.get_states_1d()
-        return z
+        z = self.q_device.get_state_1d()
+        # print('\n\n qdevice state dim ', z.shape, '\n\n')
+        z_mat = torch.outer(z, torch.conj(z))
+        # print('\n\n  state after outer dim ', z_mat.shape, '\n\n')
+        z1 = self.simulate_noise_model(z_mat)
+        return z1
 
     def simulate_noise_model(self, x):
         # print("Running simulations...")
@@ -126,14 +130,15 @@ class EquilibriumModel(tq.QuantumModule):
         # TODO instead of storing it in the model I guess, depends on what we need for the architecture
         assert isinstance(x, torch.Tensor)
         initial_state = x.flatten()
+        assert initial_state.shape[0] == int(self.dim**2)
 
         # Solve the master equation
         func = lambda t, y: self.lindblad_rhs(t, y, self.H_torch, self.noise_tensor_list)
         z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')  # dopri5 is standard, ~ RK45
         # result now is a (num_timesteps, flattened) tensor, reshape if we want a matrix
 
-        # return torch.reshape(z[-1], (self.dim, self.dim)) # return only solution at final time -- reshape
-        return torch.reshape(z, (len(self.tlist), self.dim, self.dim)) # return only solution at final time -- reshape
+        return torch.reshape(z[-1], (self.dim, self.dim)) # return only solution at final time -- reshape
+        # return torch.reshape(z, (len(self.tlist), self.dim, self.dim)) # return only solution at final time -- reshape
 
     """ ------------------------------------ other functions ----------------------------------- """
     """ Helper functions for creating initial states of relevance to TFIMs"""
@@ -194,6 +199,7 @@ class EquilibriumModel(tq.QuantumModule):
 
     def lindblad_rhs(self, t, state, H, noise):
         """ Lindblad master equation rhs; d/dt rho = -i[H,rho] + L(rho) """
+        # print('\n\n input state dim ', state.shape, '\n\n')
         state_matrix = state.reshape((self.dim, self.dim))
         rhs = torch.tensor([-1j], dtype=torch.cfloat) * (H @ state_matrix - state_matrix @ H)
         for n in noise:
@@ -489,8 +495,10 @@ class QDEQCircuit(nn.Module):
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
         elif self.dataset == 'thermal': # @Philipp edit here
             bsz = 1
+            func_args = []
             # might need some reshapes regarding bsz
-            z1s = torch.zeros((bsz, 1, self.func.dim))
+            # z1s = torch.zeros((bsz, 1, self.func.dim))
+            z1s = torch.zeros((bsz, 1, int(self.func.dim**2)))
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
