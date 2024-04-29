@@ -31,13 +31,14 @@ import qutip as qt
 
 class EquilibriumModel(tq.QuantumModule):
 
+    # start new
     class QLayer(tq.QuantumModule):
-        # TODO: make this more tailored to the application
         def __init__(self, n_wires):
             super().__init__()
             self.n_wires = n_wires
-            self.random_layer = tq.RandomLayer(n_ops=50,
-                                               wires=list(range(self.n_wires)), seed=1111)
+            self.random_layer = tq.RandomLayer(
+                n_ops=50, wires=list(range(self.n_wires))
+            )
 
             # gates with trainable parameters
             self.rx0 = tq.RX(has_params=True, trainable=True)
@@ -45,35 +46,71 @@ class EquilibriumModel(tq.QuantumModule):
             self.rz0 = tq.RZ(has_params=True, trainable=True)
             self.crx0 = tq.CRX(has_params=True, trainable=True)
 
-        @tq.static_support
-        def forward(self, q_device: tq.QuantumDevice):
-            """
-            1. To convert tq QuantumModule to qiskit or run in the static
-            model, need to:
-                (1) add @tq.static_support before the forward
-                (2) make sure to add
-                    static=self.static_mode and
-                    parent_graph=self.graph
-                    to all the tqf functions, such as tqf.hadamard below
-            """
-            self.q_device = q_device
-
-            self.random_layer(self.q_device)
+        def forward(self, qdev: tq.QuantumDevice):
+            self.random_layer(qdev)
 
             # some trainable gates (instantiated ahead of time)
-            self.rx0(self.q_device, wires=0)
-            self.ry0(self.q_device, wires=1)
-            self.rz0(self.q_device, wires=3)
-            self.crx0(self.q_device, wires=[0, 2])
+            self.rx0(qdev, wires=0)
+            self.ry0(qdev, wires=1)
+            self.rz0(qdev, wires=3)
+            self.crx0(qdev, wires=[0, 2])
 
             # add some more non-parameterized gates (add on-the-fly)
-            tqf.hadamard(self.q_device, wires=3, static=self.static_mode,
-                         parent_graph=self.graph)
-            tqf.sx(self.q_device, wires=2, static=self.static_mode,
-                   parent_graph=self.graph)
-            tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
-                     parent_graph=self.graph)
+            qdev.h(wires=3)  # type: ignore
+            qdev.sx(wires=2)  # type: ignore
+            qdev.cnot(wires=[3, 0])  # type: ignore
+            qdev.rx(
+                wires=1,\
+                params=torch.tensor([0.1]),\
+                static=self.static_mode,\
+                parent_graph=self.graph)  # type: ignore
+    # end new
 
+
+    # ''' start old
+    # class QLayer(tq.QuantumModule):
+    #     # TODO: make this more tailored to the application
+    #     def __init__(self, n_wires):
+    #         super().__init__()
+    #         self.n_wires = n_wires
+    #         self.random_layer = tq.RandomLayer(n_ops=50,
+    #                                            wires=list(range(self.n_wires)), seed=1111)
+
+    #         # gates with trainable parameters
+    #         self.rx0 = tq.RX(has_params=True, trainable=True)
+    #         self.ry0 = tq.RY(has_params=True, trainable=True)
+    #         self.rz0 = tq.RZ(has_params=True, trainable=True)
+    #         self.crx0 = tq.CRX(has_params=True, trainable=True)
+
+    #     @tq.static_support
+    #     def forward(self, q_device: tq.QuantumDevice):
+    #         """
+    #         1. To convert tq QuantumModule to qiskit or run in the static
+    #         model, need to:
+    #             (1) add @tq.static_support before the forward
+    #             (2) make sure to add
+    #                 static=self.static_mode and
+    #                 parent_graph=self.graph
+    #                 to all the tqf functions, such as tqf.hadamard below
+    #         """
+    #         self.q_device = q_device
+
+    #         self.random_layer(self.q_device)
+
+    #         # some trainable gates (instantiated ahead of time)
+    #         self.rx0(self.q_device, wires=0)
+    #         self.ry0(self.q_device, wires=1)
+    #         self.rz0(self.q_device, wires=3)
+    #         self.crx0(self.q_device, wires=[0, 2])
+
+    #         # add some more non-parameterized gates (add on-the-fly)
+    #         tqf.hadamard(self.q_device, wires=3, static=self.static_mode,
+    #                      parent_graph=self.graph)
+    #         tqf.sx(self.q_device, wires=2, static=self.static_mode,
+    #                parent_graph=self.graph)
+    #         tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
+    #                  parent_graph=self.graph)
+    # ''' # end old
 
     """ Setting up the system """
     def __init__(self):
@@ -93,51 +130,52 @@ class EquilibriumModel(tq.QuantumModule):
         # TODO some of these values will be input, some of them more like hyperparameters; we should discuss
         # self.n_wires = 3  # Number of qubits.
         self.dim = 2**self.n_wires  # Hilbert space dimension
-        self.T = 50  # "Temperature" // room temperature superconductor
-        self.beta = 1/self.T  # inverse "temperature"
-        self.t = 1  # Timestep related to the thermalizing map.
-        self.n_timesteps = 20 # Number of steps to use to reach t
-        self.tlist = torch.linspace(0, self.t, self.n_timesteps)
-        self.H = self.TFIM_constructor(self.n_wires, h=0.5)  # Hamiltonian and noise is defined.
-        # TODO more hyperparameters hidden in the noise
-        self.noise = (self.noise_constructor(self.n_wires, qt.sigmap(), rate=0.1*np.exp(-self.beta)) +
-                      self.noise_constructor(self.n_wires, qt.sigmam(), rate=0.1))
-        assert np.all(n.iscptp for n in self.noise)
+        # ''' start old
+        # self.T = 50  # "Temperature" // room temperature superconductor
+        # self.beta = 1/self.T  # inverse "temperature"
+        # self.t = 1  # Timestep related to the thermalizing map.
+        # self.n_timesteps = 20 # Number of steps to use to reach t
+        # self.tlist = torch.linspace(0, self.t, self.n_timesteps, requires_grad=False)
+        # self.H = self.TFIM_constructor(self.n_wires, h=0.5)  # Hamiltonian and noise is defined.
+        # # TODO more hyperparameters hidden in the noise
+        # self.noise = (self.noise_constructor(self.n_wires, qt.sigmap(), rate=0.1*np.exp(-self.beta)) +
+        #               self.noise_constructor(self.n_wires, qt.sigmam(), rate=0.1))
+        # # assert np.all(n.iscptp for n in self.noise)
 
-        """ Convert operators to pytorch tensors """
-        # TODO might be able to do nograd on them
-        self.H_torch = torch.tensor(self.H.full(), dtype=torch.cfloat)
-        self.noise_tensor_list = [torch.tensor(n.full(), dtype=torch.cfloat) for n in self.noise]
+        # """ Convert operators to pytorch tensors """
+        # # TODO might be able to do nograd on them
+        # self.H_torch = torch.tensor(self.H.full(), dtype=torch.cfloat, requires_grad=False)
+        # self.noise_tensor_list = [torch.tensor(n.full(), dtype=torch.cfloat, requires_grad=False) for n in self.noise]
+        # ''' # end old
 
     """ Running simulations """
     # we want to change that to a set up circuit, put that into x, and then simulate based on that
     """ x should be self.q_layer.get_states_1d() """
-    # def forward(self, x):
-    def forward(self, x):
+    def forward(self):
         bsz = 1
+        # start new
+        self.q_device.reset_op_history()
+        # end new
         self.q_layer(self.q_device)
         # not sure about nomenclature of x, z here
-        z = self.q_device.get_state_1d()
-        # print('\n\n qdevice state dim ', z.shape, '\n\n')
+        z = self.q_device.get_states_1d()[0]
         z_mat = torch.outer(z, torch.conj(z))
-        # print('\n\n  state after outer dim ', z_mat.shape, '\n\n')
+        z_mat.requires_grad_()  # I think this is the better choice, as grad-ing z still
+                                # does not impose grads on z_mat... idk why tho
         z1 = self.simulate_noise_model(z_mat)
         return z1
 
     def simulate_noise_model(self, x):
-        # print("Running simulations...")
-        # TODO we could also take the initial state as external input here and just output the output state
-        # TODO instead of storing it in the model I guess, depends on what we need for the architecture
-        assert isinstance(x, torch.Tensor)
         initial_state = x.flatten()
-        assert initial_state.shape[0] == int(self.dim**2)
 
         # Solve the master equation
         func = lambda t, y: self.lindblad_rhs(t, y, self.H_torch, self.noise_tensor_list)
-        z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')  # dopri5 is standard, ~ RK45
+        # z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')  # dopri5 is standard, ~ RK45
+        z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')[-1]  # dopri5 is standard, ~ RK45
         # result now is a (num_timesteps, flattened) tensor, reshape if we want a matrix
 
-        return torch.reshape(z[-1], (self.dim, self.dim)) # return only solution at final time -- reshape
+        # return torch.reshape(z[-1], (self.dim, self.dim)) # return only solution at final time -- reshape
+        return torch.reshape(z, (self.dim, self.dim)) # return only solution at final time -- reshape
         # return torch.reshape(z, (len(self.tlist), self.dim, self.dim)) # return only solution at final time -- reshape
 
     """ ------------------------------------ other functions ----------------------------------- """
@@ -195,13 +233,18 @@ class EquilibriumModel(tq.QuantumModule):
     @staticmethod
     def lindblad_dissipator(operator, state, gamma:float=1.):
         """ applied Lindbladian """
-        return gamma * (operator @ state @ operator.conj().T) - 0.5 * operator.conj().T @ operator @ state - 0.5 * state @ operator.conj().T @ operator
+        gamma = torch.tensor(gamma, dtype=torch.cfloat, requires_grad=False)
+        half = torch.tensor(-1/2, dtype=torch.cfloat, requires_grad=False)
+        return gamma * (operator @ state @ operator.conj().T) + half*operator.conj().T @ operator @ state + half*state @ operator.conj().T @ operator
+    # def lindblad_dissipator(operator, state, gamma:float=1.):
+    #     """ applied Lindbladian """
+    #     return gamma * (operator @ state @ operator.conj().T) - 0.5 * operator.conj().T @ operator @ state - 0.5 * state @ operator.conj().T @ operator
 
     def lindblad_rhs(self, t, state, H, noise):
         """ Lindblad master equation rhs; d/dt rho = -i[H,rho] + L(rho) """
         # print('\n\n input state dim ', state.shape, '\n\n')
         state_matrix = state.reshape((self.dim, self.dim))
-        rhs = torch.tensor([-1j], dtype=torch.cfloat) * (H @ state_matrix - state_matrix @ H)
+        rhs = torch.tensor([-1j], dtype=torch.cfloat, requires_grad=False) * (H @ state_matrix - state_matrix @ H)
         for n in noise:
             rhs += self.lindblad_dissipator(n, state_matrix)
         return rhs.flatten()
@@ -209,6 +252,8 @@ class EquilibriumModel(tq.QuantumModule):
 # adjust
 def state_loss(r1, r2):
     # return 1/2*torch.sum(torch.linalg.svdvals(r1-r2))
+    r1 = r1.reshape((16,16))
+    r2 = r2.reshape((16,16))
     _, s, _ = torch.linalg.svd(r1-r2)
     return 1/2*torch.sum(s)
 
@@ -471,6 +516,9 @@ class QDEQCircuit(nn.Module):
             # print("Fourier model not implemented yet!"); import sys; sys.exit(0)
         elif self.dataset == 'thermal':  # @Philipp edit here
             self.func = EquilibriumModel().to(device)
+        #     for name, param in self.func.named_parameters():
+        #         print(name, param.requires_grad)
+        # exit()
         self.f_solver = f_solver
         self.b_solver = b_solver if b_solver else self.f_solver
         self.hook = None
@@ -493,12 +541,12 @@ class QDEQCircuit(nn.Module):
             bsz = x.shape[0]
             func_args = []
             z1s = torch.zeros(bsz, 1, 1) # bsz x 1 for 1 qubit
-        elif self.dataset == 'thermal': # @Philipp edit here
+        elif self.dataset == 'thermal':
             bsz = 1
             func_args = []
             # might need some reshapes regarding bsz
             # z1s = torch.zeros((bsz, 1, self.func.dim))
-            z1s = torch.zeros((bsz, 1, int(self.func.dim**2)))
+            z1s = torch.zeros((bsz, 1, int(self.func.dim**2)), dtype=torch.cfloat)
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
@@ -511,7 +559,10 @@ class QDEQCircuit(nn.Module):
             #if debug:
              #   print("I AM DEBUGGING IN DIRECT SOLVER")
             for i in range(self.n_layer):
-                z1s = self.func(z1s, *func_args)
+                if not self.dataset == 'thermal': # @Philipp edit here
+                    z1s = self.func(z1s, *func_args)
+                elif self.dataset == 'thermal':
+                    z1s = self.func.simulate_noise_model(z1s)
             new_z1s = z1s
         elif self.mode=="implicit":
             #print("implicit solver", train_step)
@@ -521,7 +572,10 @@ class QDEQCircuit(nn.Module):
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
                 # print("z1s before entering solver", torch.norm(z1s))
-                result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                if not self.dataset == 'thermal':
+                    result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                elif self.dataset == 'thermal':
+                    result = self.f_solver(lambda z: self.func.simulate_noise_model(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
                 # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
@@ -543,17 +597,27 @@ class QDEQCircuit(nn.Module):
                         # To avoid infinite loop
                         self.hook.remove()
                         torch.cuda.synchronize()
-                    new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
-                                                                     retain_graph=True,\
-                                                                     )[0] + grad,\
-                                                                     torch.zeros_like(grad),\
-                                                                     threshold=b_thres)['result']
+
+
+                    fnc = lambda y: autograd.grad(new_z1s, z1s, y)
+                    # fnc = lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad
+                    print('fncy', fnc(grad))
+                    exit()
+                    new_grad = self.b_solver(fnc,\
+                                             torch.zeros_like(grad).requires_grad_(False),\
+                                             threshold=b_thres)['result']
+                    # new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
+                    #                                                  retain_graph=True,\
+                    #                                                  )[0] + grad,\
+                    #                                                  torch.zeros_like(grad),\
+                    #                                                  threshold=b_thres)['result']
                     return new_grad
                 self.hook = new_z1s.register_hook(backward_hook)
         core_out = new_z1s
         with torch.no_grad():
             new_z1s_plus1 = self.func(new_z1s, *func_args)
-            residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            # residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            residual = torch.mean(torch.norm(new_z1s_plus1.flatten()-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
         if self.dataset == "mnist":
             core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
@@ -585,16 +649,17 @@ class QDEQCircuit(nn.Module):
                 corrects = masks.sum().item()
                 acc = corrects / size
 
-
         elif self.dataset == "fourier":
             # MAKE SURE COMPLEX NUMBERS ALLOWED
             pred = hidden
             loss = loss_fn_fourier(pred, target)
             acc = loss.item()
+
         elif self.dataset == 'thermal':
-            pred = self.simulate_noise_model(hidden)
+            pred = self.func.simulate_noise_model(hidden)
             loss = state_loss(pred, hidden)
-            residual = loss
+            residual = loss.item()
+            acc = 1.1
 
        # if new_mems is None:
         return [loss, acc, residual, jac_loss, sradius]
