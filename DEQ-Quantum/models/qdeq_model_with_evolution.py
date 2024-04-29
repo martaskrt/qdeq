@@ -118,7 +118,7 @@ class EquilibriumModel(tq.QuantumModule):
         """ set up quantum circuit """
         # intitialize QuantumModule to provide parametrized quantum circuit
         super().__init__()
-        self.n_wires = 4  # ==chain_size
+        self.n_wires = 4  # == chain_size == number of qubits
         # Prepare quantum state and parametrized quantum circuit
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
         self.q_layer = self.QLayer(n_wires=self.n_wires)
@@ -128,30 +128,27 @@ class EquilibriumModel(tq.QuantumModule):
         """ set TFIM system and simulation """
         print("Initializing Transverse Field Ising Model...")
         # TODO some of these values will be input, some of them more like hyperparameters; we should discuss
-        # self.n_wires = 3  # Number of qubits.
         self.dim = 2**self.n_wires  # Hilbert space dimension
-        # ''' start old
-        # self.T = 50  # "Temperature" // room temperature superconductor
-        # self.beta = 1/self.T  # inverse "temperature"
-        # self.t = 1  # Timestep related to the thermalizing map.
-        # self.n_timesteps = 20 # Number of steps to use to reach t
-        # self.tlist = torch.linspace(0, self.t, self.n_timesteps, requires_grad=False)
-        # self.H = self.TFIM_constructor(self.n_wires, h=0.5)  # Hamiltonian and noise is defined.
-        # # TODO more hyperparameters hidden in the noise
-        # self.noise = (self.noise_constructor(self.n_wires, qt.sigmap(), rate=0.1*np.exp(-self.beta)) +
-        #               self.noise_constructor(self.n_wires, qt.sigmam(), rate=0.1))
-        # # assert np.all(n.iscptp for n in self.noise)
+        self.T = 50  # "Temperature" // room temperature superconductor
+        self.beta = 1/self.T  # inverse "temperature"
+        self.t = 1  # Timestep related to the thermalizing map.
+        self.n_timesteps = 20 # Number of steps to use to reach t
+        self.tlist = torch.linspace(0, self.t, self.n_timesteps, requires_grad=False)
+        self.H = self.TFIM_constructor(self.n_wires, h=0.5)  # Hamiltonian and noise is defined.
+        # TODO more hyperparameters hidden in the noise
+        self.noise = (self.noise_constructor(self.n_wires, qt.sigmap(), rate=0.1*np.exp(-self.beta)) +
+                      self.noise_constructor(self.n_wires, qt.sigmam(), rate=0.1))
+        # assert np.all(n.iscptp for n in self.noise)
 
-        # """ Convert operators to pytorch tensors """
-        # # TODO might be able to do nograd on them
-        # self.H_torch = torch.tensor(self.H.full(), dtype=torch.cfloat, requires_grad=False)
-        # self.noise_tensor_list = [torch.tensor(n.full(), dtype=torch.cfloat, requires_grad=False) for n in self.noise]
-        # ''' # end old
+        """ Convert operators to pytorch tensors """
+        # TODO might be able to do nograd on them
+        self.H_torch = torch.tensor(self.H.full(), dtype=torch.cfloat, requires_grad=False)
+        self.noise_tensor_list = [torch.tensor(n.full(), dtype=torch.cfloat, requires_grad=False) for n in self.noise]
 
     """ Running simulations """
     # we want to change that to a set up circuit, put that into x, and then simulate based on that
     """ x should be self.q_layer.get_states_1d() """
-    def forward(self):
+    def setup_PQC(self):
         bsz = 1
         # start new
         self.q_device.reset_op_history()
@@ -162,8 +159,11 @@ class EquilibriumModel(tq.QuantumModule):
         z_mat = torch.outer(z, torch.conj(z))
         z_mat.requires_grad_()  # I think this is the better choice, as grad-ing z still
                                 # does not impose grads on z_mat... idk why tho
-        z1 = self.simulate_noise_model(z_mat)
-        return z1
+        # z1 = self.simulate_noise_model(z_mat)
+        return z_mat
+
+    def forward(self, x):
+        return self.simulate_noise_model(x)
 
     def simulate_noise_model(self, x):
         initial_state = x.flatten()
@@ -546,7 +546,8 @@ class QDEQCircuit(nn.Module):
             func_args = []
             # might need some reshapes regarding bsz
             # z1s = torch.zeros((bsz, 1, self.func.dim))
-            z1s = torch.zeros((bsz, 1, int(self.func.dim**2)), dtype=torch.cfloat)
+            # z1s = torch.zeros((bsz, 1, int(self.func.dim**2)), dtype=torch.cfloat)
+            z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, int(self.func.dim**2)))
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
@@ -559,10 +560,7 @@ class QDEQCircuit(nn.Module):
             #if debug:
              #   print("I AM DEBUGGING IN DIRECT SOLVER")
             for i in range(self.n_layer):
-                if not self.dataset == 'thermal': # @Philipp edit here
-                    z1s = self.func(z1s, *func_args)
-                elif self.dataset == 'thermal':
-                    z1s = self.func.simulate_noise_model(z1s)
+                z1s = self.func(z1s, *func_args)
             new_z1s = z1s
         elif self.mode=="implicit":
             #print("implicit solver", train_step)
@@ -572,10 +570,7 @@ class QDEQCircuit(nn.Module):
             # pass according to the Theorem 1 in the paper.
             with torch.no_grad():
                 # print("z1s before entering solver", torch.norm(z1s))
-                if not self.dataset == 'thermal':
-                    result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
-                elif self.dataset == 'thermal':
-                    result = self.f_solver(lambda z: self.func.simulate_noise_model(z), z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                result = self.f_solver(lambda z: self.func(z, *func_args), z1s, threshold=f_thres, stop_mode=self.stop_mode)
                 z1s = result['result']
                 # print("z1s after exiting of solver", torch.norm(z1s))
             new_z1s = z1s
@@ -599,10 +594,7 @@ class QDEQCircuit(nn.Module):
                         torch.cuda.synchronize()
 
 
-                    fnc = lambda y: autograd.grad(new_z1s, z1s, y)
-                    # fnc = lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad
-                    print('fncy', fnc(grad))
-                    exit()
+                    fnc = lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad
                     new_grad = self.b_solver(fnc,\
                                              torch.zeros_like(grad).requires_grad_(False),\
                                              threshold=b_thres)['result']
