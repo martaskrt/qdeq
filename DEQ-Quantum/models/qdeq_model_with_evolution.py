@@ -112,6 +112,7 @@ class EquilibriumModel(tq.QuantumModule):
     #                  parent_graph=self.graph)
     # ''' # end old
 
+
     """ Setting up the system """
     def __init__(self):
 
@@ -160,12 +161,15 @@ class EquilibriumModel(tq.QuantumModule):
         z_mat.requires_grad_()  # I think this is the better choice, as grad-ing z still
                                 # does not impose grads on z_mat... idk why tho
         # z1 = self.simulate_noise_model(z_mat)
-        return z_mat
+        z_ = dilate_to_real(z_mat)
+        z_.requires_grad_()
+        return z_
 
     def forward(self, x):
         return self.simulate_noise_model(x)
 
     def simulate_noise_model(self, x):
+        x = trafo_to_complex(x)
         initial_state = x.flatten()
 
         # Solve the master equation
@@ -174,9 +178,8 @@ class EquilibriumModel(tq.QuantumModule):
         z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')[-1]  # dopri5 is standard, ~ RK45
         # result now is a (num_timesteps, flattened) tensor, reshape if we want a matrix
 
-        # return torch.reshape(z[-1], (self.dim, self.dim)) # return only solution at final time -- reshape
-        return torch.reshape(z, (self.dim, self.dim)) # return only solution at final time -- reshape
-        # return torch.reshape(z, (len(self.tlist), self.dim, self.dim)) # return only solution at final time -- reshape
+        # return torch.reshape(z, (self.dim, self.dim)) # return only solution at final time -- reshape
+        return dilate_to_real(z)
 
     """ ------------------------------------ other functions ----------------------------------- """
     """ Helper functions for creating initial states of relevance to TFIMs"""
@@ -249,9 +252,25 @@ class EquilibriumModel(tq.QuantumModule):
             rhs += self.lindblad_dissipator(n, state_matrix)
         return rhs.flatten()
 
+""" Functions to map complex vector to a vector of double dimension and back """
+def trafo_to_complex(invec):
+    invec = invec.reshape((-1))
+    length = invec.shape[0]
+    invec_Re, invec_Im = invec[:length//2], invec[length//2:]
+    assert invec_Re.shape == invec_Im.shape
+    return invec_Re + 1.j * invec_Im
+
+def dilate_to_real(invec):
+    ''' [Re, Im] dilation '''
+    invec = invec.reshape((-1))
+    invec_Re, invec_Im = torch.real(invec), torch.imag(invec)
+    return torch.cat((invec_Re, invec_Im))
+
+
 # adjust
 def state_loss(r1, r2):
     # return 1/2*torch.sum(torch.linalg.svdvals(r1-r2))
+    r1, r2 = trafo_to_complex(r1), trafo_to_complex(r2)
     r1 = r1.reshape((16,16))
     r2 = r2.reshape((16,16))
     _, s, _ = torch.linalg.svd(r1-r2)
@@ -547,7 +566,7 @@ class QDEQCircuit(nn.Module):
             # might need some reshapes regarding bsz
             # z1s = torch.zeros((bsz, 1, self.func.dim))
             # z1s = torch.zeros((bsz, 1, int(self.func.dim**2)), dtype=torch.cfloat)
-            z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, int(self.func.dim**2)))
+            z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, -1))
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
