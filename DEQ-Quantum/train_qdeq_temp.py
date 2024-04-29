@@ -17,7 +17,7 @@ sys.path.append('../')
 
 from data_utils import get_lm_corpus
 from models.qdeq_model_temp import QDEQCircuit
-#from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal 
+from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal
 from lib.solvers import anderson, broyden
 from lib import radam
 from utils.exp_utils import create_exp_dir
@@ -92,7 +92,7 @@ parser.add_argument('--stop_mode', type=str, default="rel",
                     choices=['abs', 'rel'],
                     help='stop criterion absolute or relative')
 parser.add_argument('--rand_f_thres_delta', type=int, default=0,
-                    help='use (f_thres + U(-delta, 0)) for forward threshold (delta default to 0)')    
+                    help='use (f_thres + U(-delta, 0)) for forward threshold (delta default to 0)')
 parser.add_argument('--f_thres', type=int, default=40,
                     help='forward pass Broyden threshold')
 parser.add_argument('--b_thres', type=int, default=40,
@@ -156,7 +156,7 @@ args.work_dir += "deq"
 
 print("args", args)
 wandb.config.update(args)
-    
+
 assert args.batch_size % args.batch_chunk == 0
 if args.mode == "direct" or args.pretrain_steps >0:
     assert args.n_layer > 0
@@ -198,7 +198,7 @@ if args.dataset == "mnist":
             #n_test_samples=1000,
             device=device
         )
-    
+
 elif args.dataset == "fourier":
     dataset = Fourier(n_train_samples=10,
                       n_valid_samples=5,
@@ -221,11 +221,11 @@ if args.dataset in ["fourier", "mnist"]:
             sampler=sampler,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            ) 
+            )
 else:
     dataflow['train'] = [None]
-    dataflow['valid'] = [None] 
-    dataflow['test'] = [None] 
+    dataflow['valid'] = [None]
+    dataflow['test'] = [None]
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -287,10 +287,10 @@ results_dict = {}
 def train():
     global train_step, train_loss, train_acc, train_res, train_jac_loss, best_val_loss, eval_start_time, log_start_time, results_dict, device
     model.train()
-    
+
     mems = []
     total_samples = 0
-    for batch, data in enumerate(dataflow['train']):    
+    for batch, data in enumerate(dataflow['train']):
         if args.dataset != "thermal":
             x = data['x'].to(device)
             target = data['y'].to(device)
@@ -357,17 +357,17 @@ def train():
                        "epoch": epoch,
                        "train_step": train_step,
                        "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
-            
+
             logging(log_str)
             train_loss = 0
             train_acc = 0
-            train_res =0 
+            train_res =0
             total_samples=0
             train_jac_loss = []
             log_start_time = time.time()
 
             results_dict[epoch]=[cur_loss, cur_acc, cur_res]
-            
+
             if writer is not None:
                 writer.add_scalar('result/train_loss', cur_loss, train_step)
                 writer.add_scalar('result/train_ppl', cur_ppl, train_step)
@@ -375,9 +375,9 @@ def train():
         # Enter evaluation/inference mode once in a while and save the model if needed
         if train_step % args.eval_interval == 0:
             val_loss, val_acc, val_res = evaluate(dataflow['valid'])
-            
+
             results_dict[epoch]+=[val_loss, val_acc, val_res]
-            
+
             val_ppl = math.exp(val_loss)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
@@ -391,7 +391,7 @@ def train():
                        "epoch": epoch,
                        "train_step": train_step,
                        "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
-            
+
             logging(log_str)
             logging('-' * 100)
             #if train_step // args.eval_interval == 10:
@@ -417,7 +417,7 @@ def train():
                            "epoch": epoch,
                            "train_step": train_step,
                            "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
-                
+
 
             # dev-performance based learning rate annealing
 
