@@ -17,7 +17,7 @@ sys.path.append('../')
 
 from data_utils import get_lm_corpus
 from models.qdeq_model_temp import QDEQCircuit
-from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal 
+#from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal 
 from lib.solvers import anderson, broyden
 from lib import radam
 from utils.exp_utils import create_exp_dir
@@ -230,7 +230,7 @@ else:
 # Build the model
 ###############################################################################
 
-if self.dataset == "thermal":
+if args.dataset == "thermal":
     model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
 
 else:
@@ -242,6 +242,11 @@ if not args.debug:
     writer = SummaryWriter(log_dir='log/', flush_secs=5)
 else:
     writer = None
+
+pytorch_total_params = sum(p.numel() for p in model.parameters())
+pytorch_train_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print("pytorch_total_params", pytorch_total_params)
+print("pytorch_train_params", pytorch_train_params)
 
 #### scheduler
 if args.scheduler == 'cosine':
@@ -318,6 +323,7 @@ def train():
         total_samples += len(x)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        max_memory = torch.cuda.max_memory_allocated()
         optimizer.step()
 
         # Step-wise learning rate annealing according to some scheduling (we ignore 'constant' scheduling)
@@ -341,9 +347,9 @@ def train():
             cur_jac_loss = np.mean(train_jac_loss)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
-                      '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.7f} | acc {:5.7f} | res {:5.7f} | ppl {:9.3f}'.format(
+                    '| ms/batch {:5.2f} | jac {:5.4f} | loss {:5.7f} | acc {:5.7f} | res {:5.7f} | ppl {:9.3f} | max_mem {:.10f}'.format(
                 epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
-                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_res, cur_ppl)
+                elapsed * 1000 / args.log_interval, cur_jac_loss, cur_loss, cur_acc, cur_res, cur_ppl, max_memory)
 
             wandb.log({"train_loss": cur_jac_loss,
                        "train_acc": cur_acc,
