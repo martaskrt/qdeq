@@ -1,3 +1,5 @@
+import pdb
+import time
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -166,20 +168,22 @@ class EquilibriumModel(tq.QuantumModule):
         return z_
 
     def forward(self, x):
-        return self.simulate_noise_model(x)
+        del x
+        z = self.setup_PQC()
+        return self.simulate_noise_model(z)
 
-    def simulate_noise_model(self, x):
-        x = trafo_to_complex(x)
-        initial_state = x.flatten()
+    def simulate_noise_model(self, z):
+        z = trafo_to_complex(z)
+        initial_state = z.flatten()
 
         # Solve the master equation
         func = lambda t, y: self.lindblad_rhs(t, y, self.H_torch, self.noise_tensor_list)
         # z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')  # dopri5 is standard, ~ RK45
-        z = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')[-1]  # dopri5 is standard, ~ RK45
+        z1 = torchdiffeq.odeint(func, initial_state, self.tlist, method='dopri5')[-1]  # dopri5 is standard, ~ RK45
         # result now is a (num_timesteps, flattened) tensor, reshape if we want a matrix
 
         # return torch.reshape(z, (self.dim, self.dim)) # return only solution at final time -- reshape
-        return dilate_to_real(z)
+        return dilate_to_real(z1)
 
     """ ------------------------------------ other functions ----------------------------------- """
     """ Helper functions for creating initial states of relevance to TFIMs"""
@@ -565,8 +569,8 @@ class QDEQCircuit(nn.Module):
             func_args = []
             # might need some reshapes regarding bsz
             # z1s = torch.zeros((bsz, 1, self.func.dim))
-            # z1s = torch.zeros((bsz, 1, int(self.func.dim**2)), dtype=torch.cfloat)
-            z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, -1))
+            z1s = torch.zeros((bsz, 1, int(2*self.func.dim**2)), dtype=torch.cfloat, requires_grad=False)
+            # z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, -1))
         jac_loss = torch.tensor(0.0).to(z1s)
         sradius = torch.zeros(bsz, 1).to(z1s)
         #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
@@ -615,7 +619,7 @@ class QDEQCircuit(nn.Module):
 
                     fnc = lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad
                     new_grad = self.b_solver(fnc,\
-                                             torch.zeros_like(grad).requires_grad_(False),\
+                                             torch.zeros_like(grad),\
                                              threshold=b_thres)['result']
                     # new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
                     #                                                  retain_graph=True,\

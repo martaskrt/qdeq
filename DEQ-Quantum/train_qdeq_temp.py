@@ -312,10 +312,15 @@ def train():
         else:
             loss.backward()
 
-        train_loss += loss.float().item() * len(x)
-        train_acc += acc * len(x)
-        train_res += res * len(x)
-        total_samples += len(x)
+        lenx = len(x) if not args.dataset=='thermal' else 1
+        train_loss += loss.float().item() * lenx
+        train_acc += acc * lenx
+        train_res += res * lenx
+        total_samples += lenx
+        # train_loss += loss.float().item() * len(x)
+        # train_acc += acc * len(x)
+        # train_res += res * len(x)
+        # total_samples += len(x)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
