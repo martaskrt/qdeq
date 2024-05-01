@@ -31,10 +31,8 @@ from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 import torchdiffeq
 import qutip as qt
 
-class EquilibriumModel(tq.QuantumModule):
-
-    # start new
-    class QLayer(tq.QuantumModule):
+class QState_Thermal(tq.QuantumModule):
+    class QLayer_Thermal(tq.QuantumModule):
         def __init__(self, n_wires):
             super().__init__()
             self.n_wires = n_wires
@@ -66,55 +64,41 @@ class EquilibriumModel(tq.QuantumModule):
                 params=torch.tensor([0.1]),\
                 static=self.static_mode,\
                 parent_graph=self.graph)  # type: ignore
-    # end new
 
+    def __init__(self):
+        """ set up quantum circuit """
+        # intitialize QuantumModule to provide parametrized quantum circuit
+        super().__init__()
+        self.n_wires = 4  # == chain_size == number of qubits
+        # Prepare quantum state and parametrized quantum circuit
+        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+        self.q_layer = self.QLayer_Thermal(n_wires=self.n_wires)
+        self.dim = 2**self.n_wires  # Hilbert space dimension
+        # maybe also check the torchquantum density functionality. not sure though if they can
+        # do parametrized density matrices
 
-    # ''' start old
-    # class QLayer(tq.QuantumModule):
-    #     # TODO: make this more tailored to the application
-    #     def __init__(self, n_wires):
-    #         super().__init__()
-    #         self.n_wires = n_wires
-    #         self.random_layer = tq.RandomLayer(n_ops=50,
-    #                                            wires=list(range(self.n_wires)), seed=1111)
+    def setup_PQC(self):
+        bsz = 1
+        # start new
+        # self.q_device.reset_op_history()
+        # end new
+        self.q_layer(self.q_device)
+        # not sure about nomenclature of x, z here
+        z = self.q_device.get_states_1d()[0]
+        z_mat = torch.outer(z, torch.conj(z))
+        z_mat.requires_grad_()  # I think this is the better choice, as grad-ing z still
+                                # does not impose grads on z_mat... idk why tho
+        # z1 = self.simulate_noise_model(z_mat)
+        z_ = dilate_to_real(z_mat)
+        # z_.requires_grad_()
+        return z_
 
-    #         # gates with trainable parameters
-    #         self.rx0 = tq.RX(has_params=True, trainable=True)
-    #         self.ry0 = tq.RY(has_params=True, trainable=True)
-    #         self.rz0 = tq.RZ(has_params=True, trainable=True)
-    #         self.crx0 = tq.CRX(has_params=True, trainable=True)
+    def forward(self):
+        # z = torch.utils.checkpoint.checkpoint(self.setup_PQC, *[], use_reentrant=False)
+        z = self.setup_PQC()
+        return z
 
-    #     @tq.static_support
-    #     def forward(self, q_device: tq.QuantumDevice):
-    #         """
-    #         1. To convert tq QuantumModule to qiskit or run in the static
-    #         model, need to:
-    #             (1) add @tq.static_support before the forward
-    #             (2) make sure to add
-    #                 static=self.static_mode and
-    #                 parent_graph=self.graph
-    #                 to all the tqf functions, such as tqf.hadamard below
-    #         """
-    #         self.q_device = q_device
-
-    #         self.random_layer(self.q_device)
-
-    #         # some trainable gates (instantiated ahead of time)
-    #         self.rx0(self.q_device, wires=0)
-    #         self.ry0(self.q_device, wires=1)
-    #         self.rz0(self.q_device, wires=3)
-    #         self.crx0(self.q_device, wires=[0, 2])
-
-    #         # add some more non-parameterized gates (add on-the-fly)
-    #         tqf.hadamard(self.q_device, wires=3, static=self.static_mode,
-    #                      parent_graph=self.graph)
-    #         tqf.sx(self.q_device, wires=2, static=self.static_mode,
-    #                parent_graph=self.graph)
-    #         tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
-    #                  parent_graph=self.graph)
-    # ''' # end old
-
-
+class EquilibriumModel(tq.QuantumModule):
     """ Setting up the system """
     def __init__(self):
 
@@ -123,8 +107,8 @@ class EquilibriumModel(tq.QuantumModule):
         super().__init__()
         self.n_wires = 4  # == chain_size == number of qubits
         # Prepare quantum state and parametrized quantum circuit
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        self.q_layer = self.QLayer(n_wires=self.n_wires)
+        # self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
+        # self.q_layer = QLayer_Thermal(n_wires=self.n_wires)
         # maybe also check the torchquantum density functionality. not sure though if they can
         # do parametrized density matrices
 
@@ -135,7 +119,8 @@ class EquilibriumModel(tq.QuantumModule):
         self.T = 50  # "Temperature" // room temperature superconductor
         self.beta = 1/self.T  # inverse "temperature"
         self.t = 1  # Timestep related to the thermalizing map.
-        self.n_timesteps = 20 # Number of steps to use to reach t
+        # self.n_timesteps = 20 # Number of steps to use to reach t
+        self.n_timesteps = 2 # Number of steps to use to reach t
         self.tlist = torch.linspace(0, self.t, self.n_timesteps, requires_grad=False)
         self.H = self.TFIM_constructor(self.n_wires, h=0.5)  # Hamiltonian and noise is defined.
         # TODO more hyperparameters hidden in the noise
@@ -151,30 +136,15 @@ class EquilibriumModel(tq.QuantumModule):
     """ Running simulations """
     # we want to change that to a set up circuit, put that into x, and then simulate based on that
     """ x should be self.q_layer.get_states_1d() """
-    def setup_PQC(self):
-        bsz = 1
-        # start new
-        self.q_device.reset_op_history()
-        # end new
-        self.q_layer(self.q_device)
-        # not sure about nomenclature of x, z here
-        z = self.q_device.get_states_1d()[0]
-        z_mat = torch.outer(z, torch.conj(z))
-        z_mat.requires_grad_()  # I think this is the better choice, as grad-ing z still
-                                # does not impose grads on z_mat... idk why tho
-        # z1 = self.simulate_noise_model(z_mat)
-        z_ = dilate_to_real(z_mat)
-        z_.requires_grad_()
-        return z_
 
-    def forward(self, x):
-        del x
-        z = self.setup_PQC()
+
+    def forward(self, z):
+        # z = self.setup_PQC()
         return self.simulate_noise_model(z)
 
     def simulate_noise_model(self, z):
-        z = trafo_to_complex(z)
-        initial_state = z.flatten()
+        # z = trafo_to_complex(z)
+        initial_state = z.flatten().type(torch.float)
 
         # Solve the master equation
         func = lambda t, y: self.lindblad_rhs(t, y, self.H_torch, self.noise_tensor_list)
@@ -183,7 +153,8 @@ class EquilibriumModel(tq.QuantumModule):
         # result now is a (num_timesteps, flattened) tensor, reshape if we want a matrix
 
         # return torch.reshape(z, (self.dim, self.dim)) # return only solution at final time -- reshape
-        return dilate_to_real(z1)
+        # return dilate_to_real(z1)
+        return z1.requires_grad_(True)
 
     """ ------------------------------------ other functions ----------------------------------- """
     """ Helper functions for creating initial states of relevance to TFIMs"""
@@ -250,15 +221,15 @@ class EquilibriumModel(tq.QuantumModule):
     def lindblad_rhs(self, t, state, H, noise):
         """ Lindblad master equation rhs; d/dt rho = -i[H,rho] + L(rho) """
         # print('\n\n input state dim ', state.shape, '\n\n')
-        state_matrix = state.reshape((self.dim, self.dim))
+        state_matrix = trafo_to_complex(state).reshape((self.dim, self.dim))
         rhs = torch.tensor([-1j], dtype=torch.cfloat, requires_grad=False) * (H @ state_matrix - state_matrix @ H)
         for n in noise:
             rhs += self.lindblad_dissipator(n, state_matrix)
-        return rhs.flatten()
+        return dilate_to_real(rhs).flatten()
 
 """ Functions to map complex vector to a vector of double dimension and back """
 def trafo_to_complex(invec):
-    invec = invec.reshape((-1))
+    invec = invec.reshape((-1)).type(torch.cfloat)
     length = invec.shape[0]
     invec_Re, invec_Im = invec[:length//2], invec[length//2:]
     assert invec_Re.shape == invec_Im.shape
@@ -268,7 +239,7 @@ def dilate_to_real(invec):
     ''' [Re, Im] dilation '''
     invec = invec.reshape((-1))
     invec_Re, invec_Im = torch.real(invec), torch.imag(invec)
-    return torch.cat((invec_Re, invec_Im))
+    return torch.cat((invec_Re.type(torch.float), invec_Im.type(torch.float)))
 
 
 # adjust
@@ -605,7 +576,7 @@ class QDEQCircuit(nn.Module):
 
             if self.training:
                 z1s.requires_grad_()
-                new_z1s = self.func(z1s, *func_args).reshape(bsz, 1, -1)
+                new_z1s = self.func().reshape(bsz, 1, -1)
                 if compute_jac_loss:
                     jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
 
@@ -630,7 +601,7 @@ class QDEQCircuit(nn.Module):
                 self.hook = new_z1s.register_hook(backward_hook)
         core_out = new_z1s
         with torch.no_grad():
-            new_z1s_plus1 = self.func(new_z1s, *func_args)
+            new_z1s_plus1 = self.func()
             # residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
             residual = torch.mean(torch.norm(new_z1s_plus1.flatten()-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
         if self.dataset == "mnist":
@@ -672,6 +643,182 @@ class QDEQCircuit(nn.Module):
 
         elif self.dataset == 'thermal':
             pred = self.func.simulate_noise_model(hidden)
+            loss = state_loss(pred, hidden)
+            residual = loss.item()
+            acc = 1.1
+
+       # if new_mems is None:
+        return [loss, acc, residual, jac_loss, sradius]
+       # else:
+       #     return [loss, acc, residual, jac_loss, sradius] + new_mems
+
+
+
+class QDEQCircuit_Thermal(nn.Module):
+    def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None):
+        super().__init__()
+        self.pretrain_steps = pretrain_steps
+
+        # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
+        self.input_conv = ImgFilter()
+        self.device = device
+        self.dataset = dataset
+        self.mode = mode
+        self.n_layer = n_layer
+        assert self.dataset == 'thermal'
+        self.func = QState_Thermal().to(device)
+        self.evolution = EquilibriumModel().to(device)
+        #     for name, param in self.func.named_parameters():
+        #         print(name, param.requires_grad)
+        # exit()
+        self.f_solver = f_solver
+        self.b_solver = b_solver if b_solver else self.f_solver
+        self.hook = None
+        self.stop_mode = stop_mode
+        self.alternative_mode = "abs" if self.stop_mode == "rel" else "rel"
+        self.logging = logging or print
+
+    def _forward(self, x, debug=False, mems=None, f_thres=30, b_thres=40, train_step=-1,
+                 compute_jac_loss=True, spectral_radius_mode=False, writer=None):
+        assert self.dataset == 'thermal'
+        bsz = 1
+        # func_args = []
+        # might need some reshapes regarding bsz
+        # z1s = torch.zeros((bsz, 1, self.func.dim))
+        z1s = torch.zeros((bsz, 1, int(2*self.func.dim**2)), dtype=torch.cfloat, requires_grad=False)
+        # z1s = self.func.setup_PQC().flatten().reshape((bsz, 1, -1))
+        jac_loss = torch.tensor(0.0).to(z1s)
+        sradius = torch.zeros(bsz, 1).to(z1s)
+        #deq_mode = (train_step < 0) or (train_step >= self.pretrain_steps)
+        #self.pretrain_steps = 0
+        #print("mode", self.mode, train_step, self.pretrain_steps, self.training)
+
+
+        # warming up the weights:
+        if self.mode =="direct" or train_step <= self.pretrain_steps:
+            #if debug:
+             #   print("I AM DEBUGGING IN DIRECT SOLVER")
+            for i in range(self.n_layer):
+                # z1s = self.func(z1s, *func_args)
+                z1s = self.evolution(self.func())
+            new_z1s = z1s
+        elif self.mode=="implicit":
+            #print("implicit solver", train_step)
+            #if debug:
+             #   print("I AM DEBUGGING IN IMPLICIT SOLVER")
+            # Compute the equilibrium via DEQ. When in training mode, we need to register the analytical backward
+            # pass according to the Theorem 1 in the paper.
+            with torch.no_grad():
+                # print("z1s before entering solver", torch.norm(z1s))
+                # print(list(self.func.parameters()))
+                # print('after before')
+
+                # TODO temporarily sensible function
+                old_z1s = z1s.clone().detach()
+                def function_for_here(z):
+                    def return_function():
+                        out = self.evolution(old_z1s) - self.func()
+                        return out
+                    return return_function()
+
+                result = self.f_solver(function_for_here, z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                # result = self.f_solver(lambda z: self.evolution(z) - self.func(), z1s, threshold=f_thres, stop_mode=self.stop_mode)
+                # print('before after')
+
+                # print('idiot', self.func)
+                # print(list(self.func.parameters()))
+                z1s = result['result']
+
+                # print("z1s after exiting of solver", torch.norm(z1s))
+            new_z1s = z1s
+            if (not self.training) and spectral_radius_mode:
+                with torch.enable_grad():
+                    z1s.requires_grad_()
+                    new_z1s = self.func()
+                _, sradius = power_method(new_z1s, z1s, n_iters=150)
+
+            if self.training:
+                z1s.requires_grad_()
+                new_z1s = self.func().reshape(bsz, 1, -1)
+                if compute_jac_loss:
+                    jac_loss = jac_loss_estimate(new_z1s, z1s, vecs=1)
+
+                def backward_hook(grad):
+                    if self.hook is not None:
+
+                        # To avoid infinite loop
+                        self.hook.remove()
+                        torch.cuda.synchronize()
+
+                    # old_z1s = z1s.clone().detach().reshape((bsz,1,-1))
+                    # z1s = z1s.reshape((bsz,1,-1))
+                    def function_for_here(z):
+                        def return_function():
+                            # out = self.evolution(old_z1s) - self.func()
+                            out = self.evolution(z1s) - z
+                            out.requires_grad_()
+                            # pdb.set_trace()
+                            return out.reshape((bsz,1,-1))
+                        return return_function()
+                    # pdb.set_trace()
+                    # print('nz1', new_z1s.shape)
+                    fnc = lambda y: autograd.grad(function_for_here(new_z1s), new_z1s, y, retain_graph=True)[0] + grad
+
+                    '''
+                    # fnc = lambda y: autograd.grad(new_z1s, z1s, y, retain_graph=True)[0] + grad
+                    '''
+                    new_grad = self.b_solver(fnc,\
+                                             torch.zeros_like(grad, requires_grad=True),\
+                                             threshold=b_thres)['result']
+                    # new_grad = self.b_solver(lambda y: autograd.grad(new_z1s, z1s, y,
+                    #                                                  retain_graph=True,\
+                    #                                                  )[0] + grad,\
+                    #                                                  torch.zeros_like(grad),\
+                    #                                                  threshold=b_thres)['result']
+                    return new_grad
+                self.hook = new_z1s.register_hook(backward_hook)
+        core_out = new_z1s
+        with torch.no_grad():
+            new_z1s_plus1 = self.func()
+            # residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+            residual = torch.mean(torch.norm(new_z1s_plus1.flatten()-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
+        core_out= core_out.reshape(bsz, -1)
+        new_mems = None
+        return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1), residual
+
+    def save_weights(self, path, name='pretrained_qdeq'):
+        with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
+            self.logging(f"Saving weight state dict at {name}.pth")
+            torch.save(self.state_dict(), f)
+    def forward(self, data, target, mems, debug=False, train_step=-1, **kwargs):
+        f_thres = kwargs.get('f_thres', 30)
+        b_thres = kwargs.get('b_thres', 40)
+        compute_jac_loss = kwargs.get('compute_jac_loss', True)
+        sradius_mode = kwargs.get('spectral_radius_mode', False)
+        writer = kwargs.get('writer', None)
+        hidden, new_mems, jac_loss, sradius, residual = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step,
+                                                            compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode,
+                                                            writer=writer, debug=debug)
+        # get prediction
+        if self.dataset == "mnist":
+            pred = self.cls(hidden)
+            loss = F.nll_loss(pred, target)
+            #loss = nn.CrossEntropyLoss()(pred, target)
+            with torch.no_grad():
+                _, indices = pred.topk(1, dim=1)
+                masks = indices.eq(target.view(-1, 1).expand_as(indices))
+                size = target.shape[0]
+                corrects = masks.sum().item()
+                acc = corrects / size
+
+        elif self.dataset == "fourier":
+            # MAKE SURE COMPLEX NUMBERS ALLOWED
+            pred = hidden
+            loss = loss_fn_fourier(pred, target)
+            acc = loss.item()
+
+        elif self.dataset == 'thermal':
+            pred = self.evolution(hidden).requires_grad_(True)
             loss = state_loss(pred, hidden)
             residual = loss.item()
             acc = 1.1
