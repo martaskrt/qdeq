@@ -22,30 +22,13 @@ from utils.positional_embedding import PositionalEmbedding
 from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
-
-class EquilibriumModel(tq.QuantumModule):
-    def __init__(self):
-        super().__init__()
-        self.n_wires = 4 # chain_size
-        self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-
-    def mesolve(self):
-        pass
-
-    def liouvillian(self, H):
-        pass
-
-    def forward(self):
-        pass
-
-
 # class FourierModel(nn.Module):
 class FourierModel(tq.QuantumModule):
     def __init__(self):
         super().__init__()
         # Here, consider only 1-qubit problems
         self.n_wires = 1
-        # Each layer has 
+        # Each layer has
         # - RY(param) - RZ(param) - RY(param) - RX(data) -
         # additionally, after the last layer, there's an extra
         # parametrized RY-RZ-RY sequence
@@ -77,12 +60,12 @@ class FourierModel(tq.QuantumModule):
 
     def forward(self, x):
         # Reshape from (bsz, 1, 1) to (bsz,) if necessary
-        x = x.reshape((x.shape[0],)) 
+        x = x.reshape((x.shape[0],))
         self.q_device.reset_states(1)
         # encode the classical image to quantum domain
         for k, gate in enumerate(self.encoder_gates):
             gate(self.q_device, wires=k % self.n_wires, params=x[:])
-        
+
         #self.ry00(q_device=self.q_device, wires=0)
         y = torch.zeros_like(x, dtype=torch.cfloat)
         self.ry00(q_device=self.q_device, wires=0)
@@ -113,7 +96,7 @@ class FourierModel(tq.QuantumModule):
             y[i] = self.measure(self.q_device)
         '''
         y = self.measure(self.q_device)
-         
+
         return y
 
 def mse_loss(x, y):
@@ -136,7 +119,7 @@ class QFCModel(tq.QuantumModule):
             self.ry0 = tq.RY(has_params=True, trainable=True)
             self.rz0 = tq.RZ(has_params=True, trainable=True)
             self.crx0 = tq.CRX(has_params=True, trainable=True)
-        
+
         @tq.static_support
         def forward(self, q_device: tq.QuantumDevice):
             """
@@ -175,11 +158,11 @@ class QFCModel(tq.QuantumModule):
 
         self.q_layer = self.QLayer()
         self.measure = tq.MeasureAll(tq.PauliZ)
-        self.num_classes = num_classes 
-        if self.num_classes == 2:
-            self.rescale = nn.Upsample(scale_factor=8)
-        elif self.num_classes == 4:
-            self.rescale = nn.Upsample(scale_factor=4)
+        self.num_classes = num_classes
+        # if self.num_classes == 2:
+        #     self.rescale = nn.Upsample(scale_factor=8)
+        # elif self.num_classes == 4:
+        #     self.rescale = nn.Upsample(scale_factor=4)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
@@ -188,10 +171,11 @@ class QFCModel(tq.QuantumModule):
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
-        if self.num_classes == 2:
-            x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+        # if self.num_classes == 2:
+        #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
-        out = self.rescale(x)
+        # out = self.rescale(x)
+        out = x  # just skipping upsampling
 
         return out
 
@@ -199,13 +183,12 @@ class ImgFilter(nn.Module):
     def __init__(self):
         super().__init__()
         # downsampling model from MDEQ model
-        
+
         self.conv = nn.Sequential(nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1),
                                   nn.ReLU(inplace=True),
                                   nn.Conv2d(1, 1, 5, stride=2),
-                                  nn.BatchNorm2d(1),
-                                  nn.ReLU(inplace=True))
+                                  nn.BatchNorm2d(1), nn.ReLU(inplace=True))
     def forward(self, x):
         out = F.avg_pool2d(x, 6).view(x.shape[0], 16)
         #out = self.conv(x)
@@ -214,7 +197,7 @@ class ImgFilter(nn.Module):
 class CLS(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16,num_classes),
+        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16, num_classes),
                                  )
     def forward(self, x):
         out = self.lin(x)
@@ -293,7 +276,7 @@ class QDEQCircuit(nn.Module):
                     z1s.requires_grad_()
                     new_z1s = self.func(z1s, *func_args)
                 _, sradius = power_method(new_z1s, z1s, n_iters=150)
-            
+
             if self.training:
                 z1s.requires_grad_()
                 new_z1s = self.func(z1s, *func_args).reshape(bsz, 1, -1)
@@ -302,7 +285,7 @@ class QDEQCircuit(nn.Module):
 
                 def backward_hook(grad):
                     if self.hook is not None:
-                        
+
                         # To avoid infinite loop
                         self.hook.remove()
                         torch.cuda.synchronize()
@@ -322,7 +305,7 @@ class QDEQCircuit(nn.Module):
         core_out= core_out.reshape(bsz, -1)
         new_mems = None
         return core_out, new_mems, jac_loss.view(-1,1), sradius.view(-1,1), residual
-    
+
     def save_weights(self, path, name='pretrained_qdeq'):
         with open(os.path.join(path, f'{name}.pth'), 'wb') as f:
             self.logging(f"Saving weight state dict at {name}.pth")
@@ -333,10 +316,10 @@ class QDEQCircuit(nn.Module):
         compute_jac_loss = kwargs.get('compute_jac_loss', True)
         sradius_mode = kwargs.get('spectral_radius_mode', False)
         writer = kwargs.get('writer', None)
-        hidden, new_mems, jac_loss, sradius, residual = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step, 
-                                                            compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode, 
+        hidden, new_mems, jac_loss, sradius, residual = self._forward(data, mems=mems, f_thres=f_thres, b_thres=b_thres, train_step=train_step,
+                                                            compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode,
                                                             writer=writer, debug=debug)
-        # get prediction 
+        # get prediction
         if "mnist" in self.dataset:
             pred = self.cls(hidden)
             #loss = F.nll_loss(pred, target)
