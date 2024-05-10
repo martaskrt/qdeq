@@ -17,7 +17,7 @@ sys.path.append('../')
 
 from data_utils import get_lm_corpus
 from models.qdeq_model_temp import QDEQCircuit
-from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal
+#from models.qdeq_model_with_evolution import QDEQCircuit as QDEQCircuit_Thermal
 from lib.solvers import anderson, broyden
 from lib import radam
 from utils.exp_utils import create_exp_dir
@@ -29,13 +29,13 @@ from load_fourier import Fourier
 
 import wandb
 
-wandb.init(project='qdeq', tags=["mnist", "hparam_sweep", "4c"])
+wandb.init(project='qdeq', tags=["fashion_mnist", "hparam_sweep", "4c"])
 wandb.init(settings=wandb.Settings(code_dir=".."))
 wandb.run.log_code("..")
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--dataset', type=str, default='mnist',
-                    choices=['fourier', "mnist", "thermal"],
+                    choices=['fourier', "mnist", "thermal", "fashion_mnist"],
                     help='dataset name')
 parser.add_argument('--num_classes', type=int, default=2,
                     choices=[2,4],
@@ -185,18 +185,25 @@ device = torch.device('cuda' if args.cuda else 'cpu')
 ###############################################################################
 # Load data
 ###############################################################################
-if args.dataset == "mnist":
-    if args.num_classes == 2:
-        classes = [3,6]
-    elif args.num_classes == 4:
-        classes = [0,3,6,9]
+if "mnist" in args.dataset:
+    if args.dataset == "mnist":
+        fashion=False
+        if args.num_classes == 2:
+            classes = [3,6]
+        elif args.num_classes == 4:
+            classes = [0,3,6,9]
+        fashion=False
+    elif args.dataset == "fashion_mnist":
+        classes = [5,7,2,0]
+        fashion=True
+
     dataset = MNIST(
             root='./mnist_data',
             train_valid_split_ratio=[0.8, 0.2],
-            #train_valid_split_ratio=[0.9, 0.1],
             digits_of_interest=classes,
             #n_test_samples=1000,
-            device=device
+            device=device,
+            fashion=fashion
         )
 
 elif args.dataset == "fourier":
@@ -205,7 +212,7 @@ elif args.dataset == "fourier":
                       n_test_samples=5)
 
 dataflow = dict()
-if args.dataset in ["fourier", "mnist"]:
+if args.dataset in ["fourier", "mnist", "fashion_mnist"]:
     for split in dataset:
         print(split, len(dataset[split]))
         #sampler = torch.utils.data.RandomSampler(dataset[split])
@@ -266,7 +273,7 @@ def evaluate(data_subset,test=False):
     with torch.no_grad():
         mems = []
         for batch, data in enumerate(data_subset):
-            if args.dataset in ['fourier', 'mnist']:
+            if args.dataset in ['fourier', 'mnist', "fashion_mnist"]:
                 x = data['x'].to(device)
                 target = data['y'].to(device)
             else:
