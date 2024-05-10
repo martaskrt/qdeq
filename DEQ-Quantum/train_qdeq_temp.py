@@ -238,12 +238,13 @@ else:
 ###############################################################################
 
 if args.dataset == "thermal":
-    model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
+    model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
 
 else:
     model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
 
 #### optimizer
+# TODO modified
 optimizer = getattr(optim if args.optim != 'RAdam' else radam, args.optim)(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 if not args.debug:
     writer = SummaryWriter(log_dir='log/', flush_secs=5)
@@ -324,10 +325,15 @@ def train():
         else:
             loss.backward()
 
-        train_loss += loss.float().item() * len(x)
-        train_acc += acc * len(x)
-        train_res += res * len(x)
-        total_samples += len(x)
+        lenx = len(x) if not args.dataset=='thermal' else 1
+        train_loss += loss.float().item() * lenx
+        train_acc += acc * lenx
+        train_res += res * lenx
+        total_samples += lenx
+        # train_loss += loss.float().item() * len(x)
+        # train_acc += acc * len(x)
+        # train_res += res * len(x)
+        # total_samples += len(x)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         max_memory = torch.cuda.max_memory_allocated()
