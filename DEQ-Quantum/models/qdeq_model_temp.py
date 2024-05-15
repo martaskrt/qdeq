@@ -149,17 +149,9 @@ class QFCModel(tq.QuantumModule):
             tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
                      parent_graph=self.graph)
 
-    def measure_big(self, bsz):
+    def measure_big(self):
         states = self.q_device.get_states_1d()
-        states = states.reshape((bsz, 1, -1))
-        result = torch.zeros((bsz, self.num_classes,), dtype=torch.float)
-        for k in range(self.num_classes):
-            obs = torch.zeros((states.shape[2],), dtype=torch.cfloat)
-            obs[k] = 1.
-            obs = torch.einsum('i, j -> ij', obs, obs)
-            result[:,k] = torch.bmm(states.conj(), torch.mm(obs, states.reshape((bsz,-1)).transpose(0, 1)).transpose(0, 1).reshape((bsz,-1,1))).squeeze().real
-
-        return result
+        return torch.square(torch.abs(states[:,:self.num_classes]))
 
     def __init__(self, num_classes):
         super().__init__()
@@ -182,7 +174,7 @@ class QFCModel(tq.QuantumModule):
         self.q_layer(self.q_device)
         # print('xshape2', x2.shape)
         # x = self.measure(self.q_device)
-        x = self.measure_big(bsz)
+        x = self.measure_big()
         # print('xshape2', x2.shape)
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
