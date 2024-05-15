@@ -149,6 +149,18 @@ class QFCModel(tq.QuantumModule):
             tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
                      parent_graph=self.graph)
 
+    def measure_big(self, bsz):
+        states = self.q_device.get_states_1d()
+        states = states.reshape((bsz, 1, -1))
+        result = torch.zeros((bsz, self.num_classes,), dtype=torch.float)
+        for k in range(self.num_classes):
+            obs = torch.zeros((states.shape[2],), dtype=torch.cfloat)
+            obs[k] = 1.
+            obs = torch.einsum('i, j -> ij', obs, obs)
+            result[:,k] = torch.bmm(states.conj(), torch.mm(obs, states.reshape((bsz,-1)).transpose(0, 1)).transpose(0, 1).reshape((bsz,-1,1))).squeeze().real
+
+        return result
+
     def __init__(self, num_classes):
         super().__init__()
         self.n_wires = 4
@@ -159,10 +171,8 @@ class QFCModel(tq.QuantumModule):
         self.q_layer = self.QLayer()
         self.measure = tq.MeasureAll(tq.PauliZ)
         self.num_classes = num_classes
-        # if self.num_classes == 2:
-        #     self.rescale = nn.Upsample(scale_factor=8)
-        # elif self.num_classes == 4:
-        #     self.rescale = nn.Upsample(scale_factor=4)
+        self.upsampling_factor = 2**(self.n_wires) / self.num_classes
+        self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
@@ -170,12 +180,14 @@ class QFCModel(tq.QuantumModule):
         x = x.view(bsz, 16) 
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
-        x = self.measure(self.q_device)
+        # print('xshape2', x2.shape)
+        # x = self.measure(self.q_device)
+        x = self.measure_big(bsz)
+        # print('xshape2', x2.shape)
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
-        # out = self.rescale(x)
-        out = x  # just skipping upsampling
+        out = self.rescale(x)
 
         return out
 
