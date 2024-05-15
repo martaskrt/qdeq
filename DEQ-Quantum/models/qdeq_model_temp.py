@@ -167,7 +167,7 @@ class QFCModel(tq.QuantumModule):
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
-        x = x.view(bsz, 16)
+        x = x.view(bsz, 16) 
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)

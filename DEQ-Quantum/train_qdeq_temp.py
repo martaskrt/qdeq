@@ -38,7 +38,7 @@ parser.add_argument('--dataset', type=str, default='mnist',
                     choices=['fourier', "mnist", "thermal", "fashion_mnist"],
                     help='dataset name')
 parser.add_argument('--num_classes', type=int, default=2,
-                    choices=[2,4],
+                    choices=[2,4,10],
                     help='numeber of mnist classes')
 parser.add_argument('--mode', type=str, default='implicit',
                     choices=['implicit', 'direct'])
@@ -194,7 +194,7 @@ if "mnist" in args.dataset:
             classes = [0,3,6,9]
         fashion=False
     elif args.dataset == "fashion_mnist":
-        classes = [5,7,2,0]
+        classes = [0,1,2,3,4,5,6,7,8,9]
         fashion=True
 
     dataset = MNIST(
