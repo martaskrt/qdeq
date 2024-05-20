@@ -128,7 +128,7 @@ class QFCModel(tq.QuantumModule):
             self.rx_list = [tq.RX(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
             self.ry_list = [tq.RY(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
             self.rz_list = [tq.RZ(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
-            self.crx0_list = [tq.CRX(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
+            self.crx_list = [tq.CRX(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
 
         @tq.static_support
         def forward(self, q_device: tq.QuantumDevice):
@@ -212,10 +212,8 @@ class QFCModel(tq.QuantumModule):
         x = x.view(bsz, self.n_wires**2)
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
-        # print('xshape2', x2.shape)
-        # x = self.measure(self.q_device)
-        x = self.measure_big()
-        # print('xshape2', x2.shape)
+        x = self.measure(self.q_device)
+        # x = self.measure_big()
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
@@ -235,7 +233,10 @@ class ImgFilter(nn.Module):
                                   nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1), nn.ReLU(inplace=True))
     def forward(self, x):
-        out = F.avg_pool2d(x, 6).view(x.shape[0], self.n_wires**2)
+        if self.n_wires == 4:
+            out = F.avg_pool2d(x, 6).view(x.shape[0], self.n_wires**2)
+        elif self.n_wires == 10:
+            out = F.avg_pool2d(x, 5, stride=3, padding=2).view(x.shape[0], self.n_wires**2)
         #out = self.conv(x)
         return out.reshape(out.shape[0], 1, -1)
 
@@ -251,20 +252,22 @@ class CLS(nn.Module):
         return out
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, dataset, mode="implicit", n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
+    def __init__(self, dataset, mode="implicit", n_wires=10, n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
         super().__init__()
         self.pretrain_steps = pretrain_steps
+        self.n_wires = n_wires
+        self.num_classes = num_classes
 
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
-        self.input_conv = ImgFilter()
+        self.input_conv = ImgFilter(self.n_wires)
         self.device = device
         self.dataset = dataset
         self.mode = mode
         self.n_layer = n_layer
         if "mnist" in self.dataset:
-            self.func = QFCModel(num_classes).to(device)
+            self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires).to(device)
             # classifier:
-            self.cls = CLS(num_classes)
+            self.cls = CLS(num_classes=self.num_classes, n_wires=self.n_wires)
         elif self.dataset == "fourier":
             self.func = FourierModel().to(device, dtype=torch.cfloat)
             # print("Fourier model not implemented yet!"); import sys; sys.exit(0)
