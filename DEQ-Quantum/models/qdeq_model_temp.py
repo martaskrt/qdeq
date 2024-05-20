@@ -164,12 +164,15 @@ class QFCModel(tq.QuantumModule):
         self.measure = tq.MeasureAll(tq.PauliZ)
         self.num_classes = num_classes
         self.upsampling_factor = 2**(self.n_wires) / self.num_classes
+
         self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
         x = x.view(bsz, 16) 
+        self.encoder(self.q_device, x)
+        self.q_layer(self.q_device)
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         # print('xshape2', x2.shape)
@@ -179,6 +182,10 @@ class QFCModel(tq.QuantumModule):
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
+        #if self.num_classes == 10:
+        #    out = torch.cat((x, torch.zeros(x.shape[0], 1, 6)), 2)
+
+        #else:
         out = self.rescale(x)
 
         return out
