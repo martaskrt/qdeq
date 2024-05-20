@@ -108,17 +108,27 @@ loss_fn_fourier = mse_loss
 
 class QFCModel(tq.QuantumModule):
     class QLayer(tq.QuantumModule):
-        def __init__(self):
+        def __init__(self, n_wires=4):
             super().__init__()
-            self.n_wires = 4
+            self.n_wires = n_wires
+            assert self.n_wires==4 or self.n_wires==10
             self.random_layer = tq.RandomLayer(n_ops=50,
                                                wires=list(range(self.n_wires)), seed=1111)
 
             # gates with trainable parameters
+            '''
             self.rx0 = tq.RX(has_params=True, trainable=True)
             self.ry0 = tq.RY(has_params=True, trainable=True)
             self.rz0 = tq.RZ(has_params=True, trainable=True)
             self.crx0 = tq.CRX(has_params=True, trainable=True)
+            '''
+            self.gate_set_length = 1
+            if self.n_wires == 10:
+                self.gate_set_length = 4
+            self.rx_list = [tq.RX(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
+            self.ry_list = [tq.RY(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
+            self.rz_list = [tq.RZ(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
+            self.crx0_list = [tq.CRX(has_params=True, trainable=True) for _ in range(self.gate_set_length)]
 
         @tq.static_support
         def forward(self, q_device: tq.QuantumDevice):
@@ -136,43 +146,70 @@ class QFCModel(tq.QuantumModule):
             self.random_layer(self.q_device)
 
             # some trainable gates (instantiated ahead of time)
+            '''
             self.rx0(self.q_device, wires=0)
             self.ry0(self.q_device, wires=1)
             self.rz0(self.q_device, wires=3)
             self.crx0(self.q_device, wires=[0, 2])
+            '''
+            for i in range(self.gate_set_length):
+                self.rx_list[i](self.q_device, wires=0+2*i)
+                self.ry_list[i](self.q_device, wires=1+2*i)
+                self.rz_list[i](self.q_device, wires=3+2*i)
+                self.crx_list[i](self.q_device, wires=[0+2*i, 2+2*i])
 
             # add some more non-parameterized gates (add on-the-fly)
+            '''
             tqf.hadamard(self.q_device, wires=3, static=self.static_mode,
                          parent_graph=self.graph)
             tqf.sx(self.q_device, wires=2, static=self.static_mode,
                    parent_graph=self.graph)
             tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
                      parent_graph=self.graph)
+            '''
+            for i in range(self.gate_set_length):
+                tqf.hadamard(self.q_device, wires=3+2*i, static=self.static_mode,
+                             parent_graph=self.graph)
+                tqf.sx(self.q_device, wires=2+2*i, static=self.static_mode,
+                       parent_graph=self.graph)
+                tqf.cnot(self.q_device, wires=[3+2*i, 0+2*i], static=self.static_mode,
+                         parent_graph=self.graph)
 
     def measure_big(self):
         states = self.q_device.get_states_1d()
         return torch.square(torch.abs(states[:,:self.num_classes]))
 
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, n_wires=10):
         super().__init__()
-        self.n_wires = 4
+        self.n_wires = n_wires
+        assert self.n_wires==4 or self.n_wires==10
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        self.encoder = tq.GeneralEncoder(
-            tq.encoder_op_list_name_dict['4x4_ryzxy'])
+        if self.n_wires==4:
+            self.encoder = tq.GeneralEncoder(
+                tq.encoder_op_list_name_dict['4x4_ryzxy'])
+        # 10x10 encoding
+        elif self.n_wires==10:
+            func_list = []
+            for i in range(0, 100):
+                if (i//10)%3 == 0:
+                    gate = 'ry'
+                elif (i//10)%3 == 1:
+                    gate = 'rx'
+                elif (i//10)%3 == 2:
+                    gate = 'rz'
+                func_list += {'input_idx': [i],   'func': gate, 'wires': [i//10]},
+            self.encoder = tq.GeneralEncoder(func_list)
 
-        self.q_layer = self.QLayer()
+        self.q_layer = self.QLayer(n_wires=self.n_wires)
         self.measure = tq.MeasureAll(tq.PauliZ)
         self.num_classes = num_classes
-        self.upsampling_factor = 2**(self.n_wires) / self.num_classes
-
+        self.upsampling_factor = self.n_wires**2 / self.num_classes
         self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
         x = x.squeeze() + injection.squeeze()
-        x = x.view(bsz, 16) 
-        self.encoder(self.q_device, x)
-        self.q_layer(self.q_device)
+        x = x.view(bsz, self.n_wires**2)
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         # print('xshape2', x2.shape)
@@ -182,17 +219,14 @@ class QFCModel(tq.QuantumModule):
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
-        #if self.num_classes == 10:
-        #    out = torch.cat((x, torch.zeros(x.shape[0], 1, 6)), 2)
-
-        #else:
         out = self.rescale(x)
 
         return out
 
 class ImgFilter(nn.Module):
-    def __init__(self):
+    def __init__(self, n_wires=10):
         super().__init__()
+        self.n_wires = n_wires
         # downsampling model from MDEQ model
 
         self.conv = nn.Sequential(nn.Conv2d(1, 1, 5, stride=2),
@@ -201,14 +235,14 @@ class ImgFilter(nn.Module):
                                   nn.Conv2d(1, 1, 5, stride=2),
                                   nn.BatchNorm2d(1), nn.ReLU(inplace=True))
     def forward(self, x):
-        out = F.avg_pool2d(x, 6).view(x.shape[0], 16)
+        out = F.avg_pool2d(x, 6).view(x.shape[0], self.n_wires**2)
         #out = self.conv(x)
         return out.reshape(out.shape[0], 1, -1)
 
 class CLS(nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, n_wires=10):
         super().__init__()
-        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(16, num_classes),
+        self.lin = nn.Sequential(nn.ReLU(inplace=True), nn.Linear(n_wires**2, num_classes),
                                  )
     def forward(self, x):
         out = self.lin(x)
@@ -247,10 +281,10 @@ class QDEQCircuit(nn.Module):
         if "mnist" in self.dataset:
             bsz, _, W, H = x.shape
             u1s = self.input_conv(x)
-            assert u1s.shape == (bsz, 1, 16)
+            assert u1s.shape == (bsz, 1, self.n_wires**2)
             func_args = [u1s]
             #z1s = torch.zeros((bsz, 1, 16), requires_grad=True)
-            z1s = torch.zeros((bsz, 1, 16))
+            z1s = torch.zeros((bsz, 1, self.n_wires**2))
         elif self.dataset == "fourier":
             # bsz, _, qlen = x.shape
             bsz = x.shape[0]
