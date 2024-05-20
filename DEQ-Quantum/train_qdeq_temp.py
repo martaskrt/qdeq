@@ -196,7 +196,7 @@ if "mnist" in args.dataset:
             classes = list(range(10))
         fashion=False
     elif args.dataset == "fashion_mnist":
-        classes = [0,1,2,3,4,5,6,7,8,9]
+        classes = list(range(10))
         fashion=True
 
     dataset = MNIST(
