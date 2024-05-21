@@ -255,11 +255,12 @@ class CLS(nn.Module):
         return out
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, dataset, mode="implicit", n_wires=10, n_layer=None, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
+    def __init__(self, dataset, mode="implicit", n_wires=10, n_layer=None, amplitude_encoder=True, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
         super().__init__()
         self.pretrain_steps = pretrain_steps
         self.n_wires = n_wires
         self.num_classes = num_classes
+        self.amplitude_encoder = amplitude_encoder
 
         # self.inject_conv = nn.Conv1d(d_model, 3*d_model, kernel_size=1)
         self.input_conv = ImgFilter(self.n_wires)
@@ -268,7 +269,7 @@ class QDEQCircuit(nn.Module):
         self.mode = mode
         self.n_layer = n_layer
         if "mnist" in self.dataset:
-            self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires).to(device)
+            self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires, amplitude_encoder=self.amplitude_encoder).to(device)
             # classifier:
             self.cls = CLS(num_classes=self.num_classes, n_wires=self.n_wires)
         elif self.dataset == "fourier":
