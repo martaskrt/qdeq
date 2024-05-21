@@ -39,7 +39,12 @@ parser.add_argument('--dataset', type=str, default='mnist',
                     help='dataset name')
 parser.add_argument('--num_classes', type=int, default=2,
                     choices=[2,4,10],
-                    help='numeber of mnist classes')
+                    help='number of mnist classes')
+parser.add_argument('--n_wires', type=int, default=4,
+                    choices=[4,10],
+                    help='number of qubits=wires in circuit')
+parser.add_argument('--amplitude_encoder', type=bool, default=True,
+                     help='choice whether to choose amplitude or angle encoder')
 parser.add_argument('--mode', type=str, default='implicit',
                     choices=['implicit', 'direct'])
 parser.add_argument('--n_layer', type=int, default=-1,
@@ -248,7 +253,7 @@ if args.dataset == "thermal":
     model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
 
 else:
-    model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes).to(device)
+    model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes, n_wires=args.n_wires, amplitude_encoder=args.amplitude_encoder).to(device)
 
 #### optimizer
 # TODO modified
@@ -519,8 +524,10 @@ with open(os.path.join(args.work_dir + "_results.csv"), 'w') as f:
         if key == epoch:
             num_vals += 3
 
+        '''
         for i in range(num_vals):
             curr_str += ",{:5.7f}".format(results_dict[key][i])
+        '''
         curr_str += '\n'
         f.write(curr_str)
 print("RUNTIME:::{:5.5f}".format(end_time - start_time))
