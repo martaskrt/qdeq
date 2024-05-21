@@ -179,26 +179,29 @@ class QFCModel(tq.QuantumModule):
         states = self.q_device.get_states_1d()
         return torch.square(torch.abs(states[:,:self.num_classes]))
 
-    def __init__(self, num_classes, n_wires=10):
+    def __init__(self, num_classes, n_wires=10, amplitude_encoder=True):
         super().__init__()
         self.n_wires = n_wires
         assert self.n_wires==4 or self.n_wires==10
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
-        if self.n_wires==4:
-            self.encoder = tq.GeneralEncoder(
-                tq.encoder_op_list_name_dict['4x4_ryzxy'])
-        # 10x10 encoding
-        elif self.n_wires==10:
-            func_list = []
-            for i in range(0, 100):
-                if (i//10)%3 == 0:
-                    gate = 'ry'
-                elif (i//10)%3 == 1:
-                    gate = 'rx'
-                elif (i//10)%3 == 2:
-                    gate = 'rz'
-                func_list += {'input_idx': [i],   'func': gate, 'wires': [i//10]},
-            self.encoder = tq.GeneralEncoder(func_list)
+        if not amplitude_encoder:
+            if self.n_wires==4:
+                self.encoder = tq.GeneralEncoder(
+                    tq.encoder_op_list_name_dict['4x4_ryzxy'])
+            # 10x10 encoding
+            elif self.n_wires==10:
+                func_list = []
+                for i in range(0, 100):
+                    if (i//10)%3 == 0:
+                        gate = 'ry'
+                    elif (i//10)%3 == 1:
+                        gate = 'rx'
+                    elif (i//10)%3 == 2:
+                        gate = 'rz'
+                    func_list += {'input_idx': [i],   'func': gate, 'wires': [i//10]},
+                self.encoder = tq.GeneralEncoder(func_list)
+        elif amplitude_encoder:
+            self.encoder = tq.AmplitudeEncoder()
 
         self.q_layer = self.QLayer(n_wires=self.n_wires)
         self.measure = tq.MeasureAll(tq.PauliZ)
