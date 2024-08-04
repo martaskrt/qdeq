@@ -40,6 +40,8 @@ parser.add_argument('--dataset', type=str, default='mnist',
 parser.add_argument('--num_classes', type=int, default=2,
                     choices=[2,4,10],
                     help='number of mnist classes')
+parser.add_argument('--n_shots', type=int, default=0,
+                    help='number of shots for measurement by sampling with shot noise; default is zero == statevector simulation')
 parser.add_argument('--n_wires', type=int, default=4,
                     choices=[4,10],
                     help='number of qubits=wires in circuit')
@@ -185,7 +187,8 @@ if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
         torch.cuda.manual_seed_all(args.seed)
 
-device = torch.device('cuda' if args.cuda else 'cpu')
+# device = torch.device('cuda' if args.cuda else 'cpu')
+device = torch.device('cuda:0' if args.cuda else 'cpu')
 
 ###############################################################################
 # Load data
@@ -253,7 +256,7 @@ if args.dataset == "thermal":
     model = QDEQCircuit_Thermal(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging).to(device)
 
 else:
-    model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes, n_wires=args.n_wires, amplitude_encoder=args.amplitude_encoder).to(device)
+    model = QDEQCircuit(args.dataset, args.mode, n_layer=args.n_layer, pretrain_steps=args.pretrain_steps, device=device, f_solver=eval(args.f_solver), b_solver=eval(args.b_solver), stop_mode=args.stop_mode, logging=logging, num_classes=args.num_classes, n_wires=args.n_wires, amplitude_encoder=args.amplitude_encoder, n_shots=args.n_shots).to(device)
 
 #### optimizer
 # TODO modified
@@ -286,6 +289,7 @@ def evaluate(data_subset,test=False):
     with torch.no_grad():
         mems = []
         for batch, data in enumerate(data_subset):
+            import pdb; pdb.set_trace()
             if args.dataset in ['fourier', 'mnist', "fashion_mnist"]:
                 x = data['x'].to(device)
                 target = data['y'].to(device)

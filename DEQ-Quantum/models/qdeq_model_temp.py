@@ -179,9 +179,10 @@ class QFCModel(tq.QuantumModule):
         states = self.q_device.get_states_1d()
         return torch.square(torch.abs(states[:,:self.num_classes]))
 
-    def __init__(self, num_classes, n_wires=10, amplitude_encoder=True):
+    def __init__(self, num_classes, n_wires=10, amplitude_encoder=True, n_shots=0):
         super().__init__()
         self.n_wires = n_wires
+        self.n_shots = n_shots
         assert self.n_wires==4 or self.n_wires==10
         self.q_device = tq.QuantumDevice(n_wires=self.n_wires)
         if not amplitude_encoder:
@@ -204,7 +205,16 @@ class QFCModel(tq.QuantumModule):
             self.encoder = tq.AmplitudeEncoder()
 
         self.q_layer = self.QLayer(n_wires=self.n_wires)
-        self.measure = tq.MeasureAll(tq.PauliZ)
+        if not self.n_shots:
+            # Measure by statevector
+            self.measure = tq.MeasureAll(tq.PauliZ)
+        else:
+            # Measure by sampling with shotnoise
+            assert self.n_shots >= 512  # make sure that is at least somewhat reasonably large
+            # build observable list with qubitwise Z-gates as in MeasureAll(tq.PauliZ)
+            obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
+            # measure by sampling observable-wise and then stack into tensor
+            self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
         self.num_classes = num_classes
         self.upsampling_factor = self.n_wires**2 / self.num_classes
         self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
@@ -255,10 +265,11 @@ class CLS(nn.Module):
         return out
 
 class QDEQCircuit(nn.Module):
-    def __init__(self, dataset, mode="implicit", n_wires=10, n_layer=None, amplitude_encoder=True, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2):
+    def __init__(self, dataset, mode="implicit", n_wires=10, n_layer=None, amplitude_encoder=True, pretrain_steps=1, device=None, f_solver=anderson, b_solver=None, stop_mode="rel", logging=None, num_classes=2, n_shots=0):
         super().__init__()
         self.pretrain_steps = pretrain_steps
         self.n_wires = n_wires
+        self.n_shots = n_shots
         self.num_classes = num_classes
         self.amplitude_encoder = amplitude_encoder
 
@@ -269,7 +280,7 @@ class QDEQCircuit(nn.Module):
         self.mode = mode
         self.n_layer = n_layer
         if "mnist" in self.dataset:
-            self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires, amplitude_encoder=self.amplitude_encoder).to(device)
+            self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires, amplitude_encoder=self.amplitude_encoder, n_shots=self.n_shots).to(device)
             # classifier:
             self.cls = CLS(num_classes=self.num_classes, n_wires=self.n_wires)
         elif self.dataset == "fourier":
