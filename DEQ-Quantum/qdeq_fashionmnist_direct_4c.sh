@@ -30,7 +30,7 @@ python train_qdeq_temp.py \
     --batch_size 256 \
 --log-interval 75 \
 --eval-interval 75 \
---num_classes 4 
+--num_classes 10
 #    done
 #done
 
