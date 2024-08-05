@@ -214,7 +214,10 @@ class QFCModel(tq.QuantumModule):
             # build observable list with qubitwise Z-gates as in MeasureAll(tq.PauliZ)
             obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
             # measure by sampling observable-wise and then stack into tensor
-            self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
+            def measure_sampling(device):
+                return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
+            # self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
+            self.measure = measure_sampling
         self.num_classes = num_classes
         self.upsampling_factor = self.n_wires**2 / self.num_classes
         self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
