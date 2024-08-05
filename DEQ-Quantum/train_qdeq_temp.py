@@ -224,6 +224,7 @@ elif args.dataset == "fourier":
                       n_test_samples=5)
 
 dataflow = dict()
+device='cuda:0'
 if args.dataset in ["fourier", "mnist", "fashion_mnist"]:
     for split in dataset:
         print(split, len(dataset[split]))
@@ -309,6 +310,7 @@ def train():
     model.train()
 
     mems = []
+    device='cuda:0'
     total_samples = 0
     for batch, data in enumerate(dataflow['train']):
         if args.dataset != "thermal":
