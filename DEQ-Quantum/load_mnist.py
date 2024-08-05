@@ -97,9 +97,11 @@ class MNISTDataset:
 
         if self.split == 'train' or self.split == 'valid':
             if self.fashion:
+                print("LOADING FASHION MNIST")
                 train_valid = datasets.FashionMNIST(
                     self.root, train=True, download=True, transform=transform)
             else:
+                print("LOADING REGULAR MNIST")
                 train_valid = datasets.MNIST(
                     self.root, train=True, download=True, transform=transform)
             idx, _ = torch.stack([train_valid.targets == number for number in
@@ -109,6 +111,7 @@ class MNISTDataset:
 
             train_len = int(self.train_valid_split_ratio[0] * len(train_valid))
             split = [train_len, len(train_valid) - train_len]
+            # self.device='cuda:0'
             train_subset, valid_subset = torch.utils.data.random_split(
                 #train_valid, split, generator=torch.Generator().manual_seed(1))
                 train_valid, split, generator=torch.Generator(self.device).manual_seed(1))
@@ -201,6 +204,7 @@ class MNISTDataset:
 
         digit = self.digits_of_interest.index(self.data[index][1])
         instance = {'x': img, 'y': digit}
+        instance = {'x': img.to(self.device), 'y': digit}
 
         return instance
 
@@ -244,5 +248,3 @@ class MNIST(Dataset):
                 device=device)
             for split in ['train', 'valid', 'test']
         })
-
-

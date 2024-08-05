@@ -187,7 +187,6 @@ if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
         torch.cuda.manual_seed_all(args.seed)
 
-# device = torch.device('cuda' if args.cuda else 'cpu')
 device = torch.device('cuda:0' if args.cuda else 'cpu')
 
 ###############################################################################
@@ -227,6 +226,7 @@ elif args.dataset == "fourier":
                       n_test_samples=5)
 
 dataflow = dict()
+device='cuda:0'
 if args.dataset in ["fourier", "mnist", "fashion_mnist"]:
     for split in dataset:
         print(split, len(dataset[split]))
@@ -289,7 +289,6 @@ def evaluate(data_subset,test=False):
     with torch.no_grad():
         mems = []
         for batch, data in enumerate(data_subset):
-            import pdb; pdb.set_trace()
             if args.dataset in ['fourier', 'mnist', "fashion_mnist"]:
                 x = data['x'].to(device)
                 target = data['y'].to(device)
@@ -313,6 +312,7 @@ def train():
     model.train()
 
     mems = []
+    device='cuda:0'
     total_samples = 0
     for batch, data in enumerate(dataflow['train']):
         if args.dataset != "thermal":
@@ -435,7 +435,7 @@ def train():
                 if not args.debug:
                     with open(os.path.join(args.work_dir, 'model.pt'), 'wb') as f:
                         print(f'Saved Model! Experiment name: {args.name}')
-                        torch.save(model, f)
+                        # torch.save(model, f)
                         model.save_weights(path=args.work_dir, name='model_state_dict')
                     with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
                         torch.save(optimizer.state_dict(), f)

@@ -215,7 +215,7 @@ class QFCModel(tq.QuantumModule):
             obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
             # measure by sampling observable-wise and then stack into tensor
             def measure_sampling(device):
-                return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
+                return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T.to(self.device)
             # self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
             self.measure = measure_sampling
         self.num_classes = num_classes
