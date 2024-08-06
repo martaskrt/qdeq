@@ -268,7 +268,7 @@ class QDEQCircuit(nn.Module):
         self.dataset = dataset
         self.mode = mode
         self.n_layer = n_layer
-        if "mnist" in self.dataset:
+        if "mnist" in self.dataset or "cifar" in self.dataset:
             self.func = QFCModel(num_classes=self.num_classes, n_wires=self.n_wires, amplitude_encoder=self.amplitude_encoder).to(device)
             # classifier:
             self.cls = CLS(num_classes=self.num_classes, n_wires=self.n_wires)
@@ -285,7 +285,7 @@ class QDEQCircuit(nn.Module):
 
     def _forward(self, x, debug=False, mems=None, f_thres=30, b_thres=40, train_step=-1,
                  compute_jac_loss=True, spectral_radius_mode=False, writer=None):
-        if "mnist" in self.dataset:
+        if "mnist" in self.dataset or "cifar" in self.dataset:
             bsz, _, W, H = x.shape
             u1s = self.input_conv(x)
             assert u1s.shape == (bsz, 1, self.n_wires**2)
@@ -352,7 +352,7 @@ class QDEQCircuit(nn.Module):
         with torch.no_grad():
             new_z1s_plus1 = self.func(new_z1s, *func_args)
             residual = torch.mean(torch.norm(new_z1s_plus1-new_z1s, dim=1) / (torch.norm(new_z1s, dim=1)+1e-9)).item()
-        if "mnist" in self.dataset:
+        if "mnist" in self.dataset or "cifar" in self.dataset:
             core_out = self.iodrop(core_out, 0.05)
         core_out= core_out.reshape(bsz, -1)
         new_mems = None
@@ -372,7 +372,7 @@ class QDEQCircuit(nn.Module):
                                                             compute_jac_loss=compute_jac_loss, spectral_radius_mode=sradius_mode,
                                                             writer=writer, debug=debug)
         # get prediction
-        if "mnist" in self.dataset:
+        if "mnist" in self.dataset or "cifar" in self.dataset:
             pred = self.cls(hidden)
             #loss = F.nll_loss(pred, target)
             loss = nn.CrossEntropyLoss()(pred, target)

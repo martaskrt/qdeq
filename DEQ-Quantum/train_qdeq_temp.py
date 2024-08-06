@@ -26,16 +26,17 @@ from torch.utils.tensorboard import SummaryWriter
 
 from load_mnist import MNIST
 from load_fourier import Fourier
+from load_cifar import CIFAR
 
 import wandb
 
-wandb.init(project='qdeq', tags=["fashion_mnist", "hparam_sweep", "4c"])
+wandb.init(project='qdeq', tags=["cifar10", "hparam_sweep", "10c"])
 wandb.init(settings=wandb.Settings(code_dir=".."))
 wandb.run.log_code("..")
 
 parser = argparse.ArgumentParser(description='PyTorch DEQ Sequence Model')
 parser.add_argument('--dataset', type=str, default='mnist',
-                    choices=['fourier', "mnist", "thermal", "fashion_mnist"],
+                    choices=['fourier', "mnist", "thermal", "fashion_mnist", "cifar10"],
                     help='dataset name')
 parser.add_argument('--num_classes', type=int, default=2,
                     choices=[2,4,10],
@@ -185,7 +186,8 @@ if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
         torch.cuda.manual_seed_all(args.seed)
 
-device = torch.device('cuda' if args.cuda else 'cpu')
+device = torch.device('cuda:0' if args.cuda else 'cpu')
+device='cuda:0'
 
 ###############################################################################
 # Load data
@@ -217,6 +219,17 @@ if "mnist" in args.dataset:
             device=device,
             fashion=fashion
         )
+elif "cifar10" in args.dataset:
+    assert args.num_classes == 10
+    classes = list(range(10))
+
+    dataset = CIFAR(
+            root='./cifar_data',
+            train_valid_split_ratio=[0.8, 0.2],
+            digits_of_interest=classes,
+            #n_test_samples=1000,
+            device=device,
+            )
 
 elif args.dataset == "fourier":
     dataset = Fourier(n_train_samples=10,
@@ -225,7 +238,7 @@ elif args.dataset == "fourier":
 
 dataflow = dict()
 device='cuda:0'
-if args.dataset in ["fourier", "mnist", "fashion_mnist"]:
+if args.dataset in ["fourier", "mnist", "fashion_mnist", "cifar10"]:
     for split in dataset:
         print(split, len(dataset[split]))
         #sampler = torch.utils.data.RandomSampler(dataset[split])
@@ -286,8 +299,9 @@ def evaluate(data_subset,test=False):
     val_loss, val_acc,val_res, val_step = 0, 0, 0, 0
     with torch.no_grad():
         mems = []
+        device='cuda:0'
         for batch, data in enumerate(data_subset):
-            if args.dataset in ['fourier', 'mnist', "fashion_mnist"]:
+            if args.dataset in ['fourier', 'mnist', "fashion_mnist", "cifar10"]:
                 x = data['x'].to(device)
                 target = data['y'].to(device)
             else:
@@ -498,8 +512,6 @@ except KeyboardInterrupt:
 end_time = time.time()
 # Load the best saved model.
 print("loading best model...")
-#with open(os.path.join("./QCdeq-mnist/qdeq_mnist_20220412-160920", 'model.pt'), 'rb') as f:
-#with open(os.path.join("./QCdeq-mnist/qdeq_mnist_warmup_10e2l_b70_20220412-204729", 'model.pt'), 'rb') as f:
 with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
     model = torch.load(f)
 para_model = model.to(device)

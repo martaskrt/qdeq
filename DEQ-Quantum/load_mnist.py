@@ -198,15 +198,12 @@ class MNISTDataset:
 
     def __getitem__(self, index: int):
         img = self.data[index][0]
-        print("before", img)
         if self.binarize:
             img = 1. * (img > self.binarize_threshold) + \
                   -1. * (img <= self.binarize_threshold)
 
         digit = self.digits_of_interest.index(self.data[index][1])
         instance = {'x': img, 'y': digit}
-        print("instance", instance)
-        exit()
 
         return instance
 
