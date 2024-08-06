@@ -217,12 +217,12 @@ class QFCModel(tq.QuantumModule):
             # measure by sampling observable-wise and then stack into tensor
             def measure_sampling(device):
                 ''' more annoying version to put things in a tensor directly '''
-                out_tensor = [ torch.tensor(tq.measurement.expval_joint_sampling(device, obs, n_shots=self.n_shots)).requires_grad_(True) for obs in obslist]
-                # out_tensor = torch.zeros((self.n_wires, 256))
-                # for nn in range(self.n_wires):
-                    # out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots).requires_grad_(True)
-                # return out_tensor.requires_grad_(True)
-                return torch.tensor(out_tensor, requires_grad=True).T
+                # out_tensor = [ torch.tensor(tq.measurement.expval_joint_sampling(device, obs, n_shots=self.n_shots)).requires_grad_(True) for obs in obslist]
+                out_tensor = torch.zeros((self.n_wires, 256))
+                for nn in range(self.n_wires):
+                    out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots)
+                return out_tensor.requires_grad_(True).T
+                # return torch.tensor(out_tensor, requires_grad=True).T
                 ''' this seems like the easier one but it's weirder w.r.t grad '''
                 # return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T.to(self.device).requires_grad_(True)
             # self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
