@@ -210,12 +210,16 @@ class QFCModel(tq.QuantumModule):
             self.measure = tq.MeasureAll(tq.PauliZ)
         else:
             # Measure by sampling with shotnoise
-            assert self.n_shots >= 512  # make sure that is at least somewhat reasonably large
+            assert self.n_shots >= 256  # make sure that is at least somewhat reasonably large
             # build observable list with qubitwise Z-gates as in MeasureAll(tq.PauliZ)
             obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
             # measure by sampling observable-wise and then stack into tensor
             def measure_sampling(device):
-                return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T.to(self.device)
+                out_tensor = torch.zeros((self.n_wires, 256))
+                for nn in range(self.n_wires):
+                    out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots)
+                return out_tensor.requires_grad_(True)
+                # return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values().requires_grad_(True)), dim=0).T.to(self.device)
             # self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
             self.measure = measure_sampling
         self.num_classes = num_classes
@@ -229,6 +233,7 @@ class QFCModel(tq.QuantumModule):
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
+        x = x.requires_grad_()
         # x = self.measure_big()
         # if self.num_classes == 2:
         #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
