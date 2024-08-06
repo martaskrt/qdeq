@@ -167,6 +167,7 @@ class QFCModel(tq.QuantumModule):
             tqf.cnot(self.q_device, wires=[3, 0], static=self.static_mode,
                      parent_graph=self.graph)
             '''
+            from torchquantum.plugin import op_history2qasm
             for i in range(self.gate_set_length):
                 tqf.hadamard(self.q_device, wires=3+2*i, static=self.static_mode,
                              parent_graph=self.graph)
@@ -208,17 +209,17 @@ class QFCModel(tq.QuantumModule):
         ''' measurement '''
         if not self.n_shots:
             # Measure by statevector
-            self.measure = tq.MeasureAll(tq.PauliZ)
+            self.measure = lambda bsz: tq.MeasureAll(tq.PauliZ)
         else:
             # Measure by sampling with shotnoise
             assert self.n_shots >= 256  # make sure that is at least somewhat reasonably large
             # build observable list with qubitwise Z-gates as in MeasureAll(tq.PauliZ)
             obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
             # measure by sampling observable-wise and then stack into tensor
-            def measure_sampling(device):
+            def measure_sampling(device, bsz):
                 ''' more annoying version to put things in a tensor directly '''
                 # out_tensor = [ torch.tensor(tq.measurement.expval_joint_sampling(device, obs, n_shots=self.n_shots)).requires_grad_(True) for obs in obslist]
-                out_tensor = torch.zeros((self.n_wires, 256))
+                out_tensor = torch.zeros((self.n_wires, bsz))
                 for nn in range(self.n_wires):
                     out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots)
                 return out_tensor.requires_grad_(True).T
@@ -239,7 +240,7 @@ class QFCModel(tq.QuantumModule):
         x = x.view(bsz, self.n_wires**2)
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
-        x = self.measure(self.q_device)
+        x = self.measure(self.q_device, bsz)
         ## x = x.requires_grad_()
         ## print('schape', x.shape)
         ## x = self.measure_big()
