@@ -426,6 +426,25 @@ def train():
             #if train_step // args.eval_interval == 10:
             #    exit()
 
+            # Evaluating test but not looking at it until chosen best valid in the end:
+            test_loss, test_acc, test_res = evaluate(dataflow['test'])
+
+            results_dict[epoch]+=[test_loss, test_acc, test_res]
+
+            test_ppl = math.exp(test_loss)
+            logging('-' * 100)
+            log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
+                      '| test loss {:5.7f} | test acc {:5.7f} | test res {:5.7f} | test ppl {:5.7f}'.format(
+                train_step // args.eval_interval, train_step,
+                (time.time() - eval_start_time), test_loss, test_acc, test_res, test_ppl)
+
+            wandb.log({"test_loss": test_loss,
+                       "test_acc": test_acc,
+                       "test_res": test_res,
+                       "epoch": epoch,
+                       "train_step": train_step,
+                       "mode": 0 if args.mode =="direct" or train_step <= args.pretrain_steps else 1})
+
             if writer is not None:
                 writer.add_scalar('result/valid_loss', val_loss, train_step)
                 writer.add_scalar('result/valid_ppl', val_ppl, train_step)

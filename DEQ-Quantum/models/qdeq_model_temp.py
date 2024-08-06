@@ -205,6 +205,7 @@ class QFCModel(tq.QuantumModule):
             self.encoder = tq.AmplitudeEncoder()
 
         self.q_layer = self.QLayer(n_wires=self.n_wires)
+        ''' measurement '''
         if not self.n_shots:
             # Measure by statevector
             self.measure = tq.MeasureAll(tq.PauliZ)
@@ -215,30 +216,38 @@ class QFCModel(tq.QuantumModule):
             obslist = [f"{'I' * i}Z{'I' * (self.n_wires - i - 1)}" for i in range(self.n_wires)]
             # measure by sampling observable-wise and then stack into tensor
             def measure_sampling(device):
-                out_tensor = torch.zeros((self.n_wires, 256))
-                for nn in range(self.n_wires):
-                    out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots)
-                return out_tensor.requires_grad_(True)
-                # return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values().requires_grad_(True)), dim=0).T.to(self.device)
+                ''' more annoying version to put things in a tensor directly '''
+                out_tensor = [ torch.tensor(tq.measurement.expval_joint_sampling(device, obs, n_shots=self.n_shots)).requires_grad_(True) for obs in obslist]
+                # out_tensor = torch.zeros((self.n_wires, 256))
+                # for nn in range(self.n_wires):
+                    # out_tensor[nn,:] = tq.measurement.expval_joint_sampling(device, obslist[nn], n_shots=self.n_shots).requires_grad_(True)
+                # return out_tensor.requires_grad_(True)
+                return torch.tensor(out_tensor, requires_grad=True).T
+                ''' this seems like the easier one but it's weirder w.r.t grad '''
+                # return torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T.to(self.device).requires_grad_(True)
             # self.measure = lambda device: torch.stack(list(tq.measurement.expval_joint_sampling_grouping(device, obslist, n_shots_per_group=self.n_shots).values()), dim=0).T
             self.measure = measure_sampling
+        ''' end measurement '''
         self.num_classes = num_classes
         self.upsampling_factor = self.n_wires**2 / self.num_classes
         self.rescale = nn.Upsample(scale_factor=self.upsampling_factor)
 
     def forward(self, x, injection):
         bsz = x.shape[0]
+        # print('xsh', x.shape, 'in', injection.shape)
         x = x.squeeze() + injection.squeeze()
         x = x.view(bsz, self.n_wires**2)
         self.encoder(self.q_device, x)
         self.q_layer(self.q_device)
         x = self.measure(self.q_device)
-        x = x.requires_grad_()
-        # x = self.measure_big()
-        # if self.num_classes == 2:
-        #     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
+        ## x = x.requires_grad_()
+        ## print('schape', x.shape)
+        ## x = self.measure_big()
+        ## if self.num_classes == 2:
+        ##     x = x.reshape(bsz, 2, 2).sum(-1).squeeze()
         x = x.reshape(x.shape[0], 1, -1)
         out = self.rescale(x)
+        # print('outshape', x.shape)
 
         return out
 
