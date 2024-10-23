@@ -49,12 +49,10 @@ load_cifar.py
 
 To train and evaluate a model, you can use one of the bash scripts in this repository (for example, `bash_scripts/qdeq_mnist.sh`). Run `bash bash_scripts/qdeq_mnist.sh train` to train the model. You can indiciate certain flags depending on what mode you want to train in. For instance, specify `--direct` if you want to use a direct solver instead of the implidict one. `n_layer` allows you to specify how many times to apply the model in the direct solver or warmup phase. To perform a warmup phase before implicit differentation, specify `--pretrain_steps` followed by the number of pretraining steps.
 
-Note that you can indicate a `--cuda` flag to run the model on a GPU; however, we had to modify some PyTorch source code for it to run because of a possible bug in the RandomSampler generator. We recommend you don't run it with CUDA; otherwise, be forewarned!
-
-
 One setting could be:
 
 ```
+cd DEQ-Quantum
 python3 train_qdeq.py --optim Adam --lr 0.005 --cuda --scheduler constant --max_step 18800 --pretrain_steps 0 --mode implicit --n_layer 0 --name qdeq_mnist_warmup_10c --f_solver broyden --b_solver broyden --stop_mode rel --f_thres 10 --b_thres 10 --jac_loss_weight 0.8 --jac_loss_freq 1 --jac_incremental 0 --batch_size 256 --rand_f_thres_delta 2 --log-interval 188 --eval-interval 188 --num_classes 10 --n_wires 10 --dataset mnist
 ```
 
