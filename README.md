@@ -25,7 +25,7 @@ PyTorch 1.13.0
 2. Create a new conda environment with Python 3.8 (e.g. `conda create -n qdeq python==3.8`)
 3. Install PyTorch 1.130 :
   `pip install torch==1.13.0+cu117 --extra-index-url https://download.pytorch.org/whl/cu117` (adjusting for your system's CUDA version)
-4. Install TorchQuantum with: `git clone git@github.com:mit-han-lab/torchquantum.git` -- in `requirements.txt`, comment out the lines with `torch` and `torchvision`. Then, in your clone, run `pip install -e .`
+4. Install TorchQuantum with: `git clone https://github.com/mit-han-lab/torchquantum.git` -- in `requirements.txt`, comment out the lines with `torch` and `torchvision`. Then, in your clone, run `pip install -e .`
 5. Finally, install WandB with `pip install wandb`
 
 
