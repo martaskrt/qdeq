@@ -7,7 +7,9 @@
 
 This is the official code repository for **Quantum Deep Equilibrium Models** (QDEQ), a framework for training quantum machine learning (QML) models using implicit differentiation. Our framework is based on the deep equilibrium transformer (DEQ-Transformer) model presented in [Deep Equilibrium Models](https://arxiv.org/abs/1909.01377) by Bai et al.
 
-<img src="images/qdeq.png" alt="drawing" style="width:200px;"/>
+ <p align="center">
+<img src="images/qdeq.png" alt="drawing" style="width:300px;"/>
+</p>
 
 
 ### Requirements
