@@ -47,6 +47,7 @@ load_mnist.py
 load_cifar.py
 ```
 
+### Model training:
 To train and evaluate a model, you can use one of the bash scripts in this repository (for example, `bash_scripts/qdeq_mnist.sh`). Run `bash bash_scripts/qdeq_mnist.sh train` to train the model. You can indiciate certain flags depending on what mode you want to train in. For instance, specify `--direct` if you want to use a direct solver instead of the implidict one. `n_layer` allows you to specify how many times to apply the model in the direct solver or warmup phase. To perform a warmup phase before implicit differentation, specify `--pretrain_steps` followed by the number of pretraining steps.
 
 One setting could be:
