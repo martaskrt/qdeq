@@ -1,7 +1,7 @@
 <h1 align="center">Quantum Deep Equilibrium (QDEQ) Models</h1>
 
  <p align="center">
- <a href=""><img src="https://img.shields.io/badge/Arxiv-coming_soon!-red?style=for-the-badge&logo=Arxiv" alt="arXiv"/></a>
+ <a href="https://arxiv.org/abs/2410.23940"><img src="https://img.shields.io/badge/Arxiv-2410.23940-red?style=for-the-badge&logo=Arxiv" alt="arXiv"/></a>
 </p>
 
 
